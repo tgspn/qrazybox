@@ -833,7 +833,7 @@ var raw_import = {
 function openRawImport(src) {
     var img = new Image();
     img.onload = function () {
-        var ratio = Math.min(1, 2500 / Math.max(img.width, img.height));
+        var ratio = Math.min(1, 4096 / Math.max(img.width, img.height));
         var width = Math.max(1, Math.round(img.width * ratio));
         var height = Math.max(1, Math.round(img.height * ratio));
         var canvas = document.createElement("canvas");
@@ -1065,7 +1065,7 @@ function drawRawImport() {
         ctx.stroke();
 
         // sampled value of each module
-        var radius = Math.max(1.5, cell * 0.15);
+        var radius = Math.max(1.5, Math.min(6, cell * 0.15));
         for (var i = 0; i < size; i++) {
             for (var j = 0; j < size; j++) {
                 var c = toView(j + 0.5, i + 0.5);
@@ -1142,7 +1142,8 @@ function zoomRawImport(factor, viewX, viewY) {
     }
     var s = raw_import.scale * raw_import.zoom;
     var x = raw_import.offset[0] + viewX / s, y = raw_import.offset[1] + viewY / s;
-    raw_import.zoom = Math.min(32, Math.max(1, raw_import.zoom * factor));
+    // up to 64 screen pixels per image pixel
+    raw_import.zoom = Math.min(Math.max(32, 64 / raw_import.scale), Math.max(1, raw_import.zoom * factor));
     s = raw_import.scale * raw_import.zoom;
     raw_import.offset = [x - viewX / s, y - viewY / s];
     clampRawImportView();
@@ -2309,11 +2310,18 @@ $(document).ready(function () {
         }
     })
 
+    // Largest module size, keeping the Decode mode canvas within browser limits
+    var maxModuleSize = function () {
+        return Math.max(50, Math.min(200, Math.floor(16000 / (qr_size + 8))));
+    }
+
     $("#btn-size-plus").click(function () {
-        if (qr_pixel_size != 50 && qr_pixel_size >= 10) {
-            qr_pixel_size += 5;
-        } else if (qr_pixel_size < 10) {
+        if (qr_pixel_size < 10) {
             qr_pixel_size += 1;
+        } else if (qr_pixel_size < 50) {
+            qr_pixel_size += 5;
+        } else if (qr_pixel_size + 10 <= maxModuleSize()) {
+            qr_pixel_size += 10;
         }
         $("#qr-size").val(qr_pixel_size + "px");
         resize(qr_pixel_size);
@@ -2322,7 +2330,9 @@ $(document).ready(function () {
         }
     })
     $("#btn-size-min").click(function () {
-        if (qr_pixel_size > 10) {
+        if (qr_pixel_size > 50) {
+            qr_pixel_size -= 10;
+        } else if (qr_pixel_size > 10) {
             qr_pixel_size -= 5;
         } else if (qr_pixel_size != 1) {
             qr_pixel_size -= 1;
@@ -2959,32 +2969,70 @@ $(document).ready(function () {
         return $(target).closest(".main").length > 0 && $(target).closest("td, textarea, #div-extract").length == 0;
     }
 
+    // Left button on a module waits a moment : pressing and holding still moves the grid,
+    // a quick click or an immediate drag is handed to the painter
+    var GRID_HOLD_MS = 300;
+    var pending_paint = null;
+
+    var startGridPan = function (x, y) {
+        grid_pan = [x, y, grid_offset[0], grid_offset[1]];
+        $("body").addClass("grid-panning");
+    }
+
+    var releasePendingPaint = function () {
+        var p = pending_paint;
+        clearTimeout(p.timer);
+        pending_paint = null;
+        $(p.target).trigger($.Event("mousedown", { which: 1, button: 0, clientX: p.x, clientY: p.y }));
+    }
+
+    // Capture phase listeners : they run before the painter (jQuery handlers on document)
     window.addEventListener("mousedown", function (e) {
         if ($(".overlay:visible").length)
             return;
         var background = isWorkspaceBackground(e.target);
         if (!background && !$(e.target).closest(".qr-box").length)
             return;
-        if (!(e.button == 1 || (e.button == 0 && (space_down || background))))
-            return;
-        // capture phase : keep the painter from handling this click
-        e.preventDefault();
-        e.stopPropagation();
-        grid_pan = [e.clientX, e.clientY, grid_offset[0], grid_offset[1]];
-        $("body").addClass("grid-panning");
+
+        if (e.button == 1 || (e.button == 0 && (space_down || background))) {
+            e.preventDefault();
+            e.stopPropagation();
+            startGridPan(e.clientX, e.clientY);
+        } else if (e.button == 0 && $(e.target).closest("#qr-table td").length) {
+            e.preventDefault();
+            e.stopPropagation();
+            pending_paint = {
+                target: e.target,
+                x: e.clientX,
+                y: e.clientY,
+                timer: setTimeout(function () {
+                    if (pending_paint) {
+                        var p = pending_paint;
+                        pending_paint = null;
+                        startGridPan(p.x, p.y);
+                    }
+                }, GRID_HOLD_MS)
+            };
+        }
     }, true);
 
     window.addEventListener("mousemove", function (e) {
+        // moved before the hold delay : it is a paint drag
+        if (pending_paint && Math.hypot(e.clientX - pending_paint.x, e.clientY - pending_paint.y) > 4)
+            releasePendingPaint();
         if (grid_pan)
             setGridOffset(grid_pan[2] + e.clientX - grid_pan[0], grid_pan[3] + e.clientY - grid_pan[1]);
-    });
+    }, true);
 
     window.addEventListener("mouseup", function () {
+        // released before the hold delay : it is a click
+        if (pending_paint)
+            releasePendingPaint();
         if (grid_pan) {
             grid_pan = null;
             $("body").removeClass("grid-panning");
         }
-    });
+    }, true);
 
     window.addEventListener("dblclick", function (e) {
         if (!$(".overlay:visible").length && isWorkspaceBackground(e.target))

@@ -348,6 +348,18 @@ ul {list-style: none;}
 	top: 0;
 }
 
+#qr-image-overlay {
+	position: absolute;
+	top: 0;
+	display: block;
+	pointer-events: none;
+}
+
+#div-image-overlay input[type=range] {
+	width: 100%;
+	box-sizing: border-box;
+}
+
 #qr-overlay tr td {
 	background: #00c853;
 	opacity: .5;

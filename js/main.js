@@ -31,6 +31,8 @@ var masking_mode = false;				// Is Masking active?
 var qr_temp_array = [];					// Temporary variable to handle qr_array duplicates
 var qr_data_block = [];					// Array to store data block in "Data Analysis tool"
 
+var image_overlay = null;				// Data URL of image shown over the editor grid (from raw image import)
+
 var is_data_module = [];				// Store data that separate between data module and fixed module (function pattern, alignment pattern, etc)
 
 var history_array = [];					// Store history information and its qr_array data
@@ -72,6 +74,7 @@ function generateTable(version) {
         element += "</tr>";
     }
     $("#qr-table").html(element);
+    setImageOverlay(null);
 
     getInformation(size);
     resize(qr_pixel_size);
@@ -447,6 +450,7 @@ function generateResult() {
     $("#qr-result").show();
     $("#qr-table").hide();
     $("#qr-overlay").hide();
+    refreshImageOverlay();
     $("body").css("background-color", "#FFFFFF");
 }
 
@@ -469,6 +473,38 @@ function resize(size) {
     $("td").each(function () {
         $(this).css({ "min-width": size + "px", "min-height": size + "px", "width": size + "px", "height": size + "px" });
     })
+    refreshImageOverlay();
+}
+
+/***
+*
+*	Image overlay over the editor grid
+*	
+***/
+function setImageOverlay(src) {
+    image_overlay = src;
+    if (src) {
+        $("#qr-image-overlay").attr("src", src);
+        $("#btn-image-overlay").addClass("active");
+        $("#div-image-overlay").show();
+    } else {
+        $("#qr-image-overlay").attr("src", "#");
+        $("#div-image-overlay").hide();
+    }
+    refreshImageOverlay();
+}
+
+function refreshImageOverlay() {
+    var table = $("#qr-table");
+    if (image_overlay && $("#btn-image-overlay").hasClass("active") && table.is(":visible")) {
+        $("#qr-image-overlay").css({
+            "width": table.outerWidth() + "px",
+            "height": table.outerHeight() + "px",
+            "opacity": $("#image-overlay-opacity").val() / 100
+        }).show();
+    } else {
+        $("#qr-image-overlay").hide();
+    }
 }
 
 /***
@@ -521,6 +557,7 @@ function toggleResult() {
 
         $("#qr-result").hide();
         $(".qr-tab").show();
+        refreshImageOverlay();
         $("#btn-switch-mode").removeClass("active");
         $("body").css("background-color", "#eceff1");
         $("#div-tool-result").hide();
@@ -563,6 +600,8 @@ function saveProject(projectName) {
     }
 
     var saveData = [qr_array, qr_version, qr_format_array];
+    if (image_overlay)
+        saveData.push(image_overlay);
     var dataList = JSON.parse(localStorage.getItem("dataList"));
     var timeNow = new Date();
     var timeData = timeNow.toDateString();
@@ -579,7 +618,16 @@ function saveProject(projectName) {
         var index = projectNameList.indexOf(projectName);
         dataList[index][1] = timeData;
     }
-    localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
+    try {
+        localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
+    } catch (e) {
+        if (saveData.length < 4)
+            throw e;
+        // not enough space for the image overlay, keep the QR code data
+        saveData.pop();
+        localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
+        alert("Not enough storage space for the image overlay.\nProject saved without it.");
+    }
     localStorage.setItem("dataList", JSON.stringify(dataList));
     $("#div-save").hide();
     changed_state = false;
@@ -601,6 +649,7 @@ function loadProject(name) {
     generateTable(qr_version);
     qr_array = loadedData[0];
     qr_format_array = loadedData[2];
+    setImageOverlay(loadedData[3] || null);
     brute_force_mode = false;
     $("#tools-brute-force, #tools-unmasking").removeClass("active");
     refreshTable();
@@ -1054,6 +1103,34 @@ function drawRawImport() {
     }
 
     $("#raw-import-stats").text(size + "x" + size + " modules : " + count[0] + " black, " + count[1] + " white, " + count[2] + " grey (unknown)");
+}
+
+// Image of the QR code area with perspective removed, one square per module
+function rectifyRawImport(version) {
+    var size = 17 + version * 4;
+    var out = size * Math.max(4, Math.min(16, Math.floor(800 / size)));
+    var map = rawImportTransform(raw_import.corners);
+    var p = raw_import.pixels;
+    var canvas = document.createElement("canvas");
+    var ctx = canvas.getContext("2d");
+    canvas.width = out;
+    canvas.height = out;
+    var image = ctx.createImageData(out, out);
+
+    for (var y = 0; y < out; y++) {
+        for (var x = 0; x < out; x++) {
+            var pt = map((x + 0.5) / out, (y + 0.5) / out);
+            var sx = Math.min(p.width - 1, Math.max(0, Math.floor(pt[0])));
+            var sy = Math.min(p.height - 1, Math.max(0, Math.floor(pt[1])));
+            var k = (sy * p.width + sx) * 4, n = (y * out + x) * 4;
+            image.data[n] = p.data[k];
+            image.data[n + 1] = p.data[k + 1];
+            image.data[n + 2] = p.data[k + 2];
+            image.data[n + 3] = 255;
+        }
+    }
+    ctx.putImageData(image, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.85);
 }
 
 function rawImportPointer(e) {
@@ -1989,6 +2066,7 @@ $(document).ready(function () {
         clearHistory();
         updateHistory("Load from raw image");
         refreshTable();
+        setImageOverlay(rectifyRawImport(version));
         changed_state = true;
     })
 
@@ -2178,6 +2256,15 @@ $(document).ready(function () {
         generateResult();
     })
 
+    $("#btn-image-overlay").click(function () {
+        $(this).toggleClass("active");
+        refreshImageOverlay();
+    })
+
+    $("#image-overlay-opacity").on("input change", function () {
+        refreshImageOverlay();
+    })
+
     $("#btn-qr-decode").click(function () {
         if (brute_force_mode) {
             $("#btn-brute-force-apply-pattern").hide();
@@ -2220,6 +2307,7 @@ $(document).ready(function () {
         $("#box-tools-extract").show();
         $("#qr-table").hide();
         $("#qr-result, #qr-overlay").hide();
+        refreshImageOverlay();
         $("#div-extract").show();
         $(".footer .mode-indicator").hide();
         $("body").css("background-color", "#fff");
@@ -2244,6 +2332,7 @@ $(document).ready(function () {
         $(".right-box").show();
         $("#box-tools-extract").hide();
         $("#qr-table").show();
+        refreshImageOverlay();
         if (analysis_mode) {
             $("#qr-overlay").show();
         }

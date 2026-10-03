@@ -100,6 +100,12 @@
 					<div id="btn-version-min" class="minus"><img src="img/minus.png"></div>
 					<div id="btn-version-plus" class="plus"><img src="img/plus.png"></div>
 				</div>
+				<div id="div-image-overlay" class="hide">
+					<div class="clear"></div>
+					<h5>Image Overlay :</h5>
+					<button class="toggle active" id="btn-image-overlay">Show</button>
+					<input type="range" id="image-overlay-opacity" min="10" max="90" value="50">
+				</div>
 			</div>
 			<div class="clear"></div>
 			<h5>Module Size :</h5>
@@ -192,6 +198,7 @@
 		<div class="qr-box">
 			<table id="qr-table" class="qr-tab"></table>
 			<table id="qr-overlay" class="qr-tab"></table>
+			<img id="qr-image-overlay" class="hide" src="#">
 			<div id="qr-result" class="hide">
 				<canvas id="qr-result-canvas"></canvas>
 				<p>

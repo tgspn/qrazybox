@@ -31,6 +31,7 @@ var masking_mode = false;				// Is Masking active?
 var qr_temp_array = [];					// Temporary variable to handle qr_array duplicates
 var qr_data_block = [];					// Array to store data block in "Data Analysis tool"
 
+var grid_offset = [0, 0];				// Translation of the grid in the workspace (pan)
 var image_overlay = null;				// Data URL of image shown over the editor grid (from raw image import)
 
 var is_data_module = [];				// Store data that separate between data module and fixed module (function pattern, alignment pattern, etc)
@@ -75,6 +76,7 @@ function generateTable(version) {
     }
     $("#qr-table").html(element);
     setImageOverlay(null);
+    setGridOffset(0, 0);
 
     getInformation(size);
     resize(qr_pixel_size);
@@ -474,6 +476,16 @@ function resize(size) {
         $(this).css({ "min-width": size + "px", "min-height": size + "px", "width": size + "px", "height": size + "px" });
     })
     refreshImageOverlay();
+}
+
+/***
+*
+*	Move the grid in the workspace
+*
+***/
+function setGridOffset(x, y) {
+    grid_offset = [x, y];
+    $(".qr-box").css("transform", (x || y) ? "translate(" + x + "px, " + y + "px)" : "");
 }
 
 /***
@@ -2266,7 +2278,10 @@ $(document).ready(function () {
         $(zoom_in ? "#btn-size-plus" : "#btn-size-min").trigger("click");
 
         var after = target.getBoundingClientRect();
-        window.scrollBy(after.left + fx * after.width - (before.left + fx * before.width), after.top + fy * after.height - (before.top + fy * before.height));
+        setGridOffset(
+            grid_offset[0] - (after.left + fx * after.width - (before.left + fx * before.width)),
+            grid_offset[1] - (after.top + fy * after.height - (before.top + fy * before.height))
+        );
     }, { passive: false });
 
     $("#btn-show-grey-pixel").click(function () {
@@ -2726,9 +2741,17 @@ $(document).ready(function () {
         selectBlock(cls);
     })
 
-    $(document).on("mousedown", "#qr-table td", function () {
+    $(document).on("mousedown", "#qr-table td", function (e) {
+        var painter = active_painter;
+        // right button paints with the opposite color of the black / white painter (eraser and fill keep their behavior)
+        if (e.which == 3 && !fill_painter && (active_painter == "0" || active_painter == "1"))
+            painter = active_painter == "0" ? "1" : "0";
+        else if (e.which == 2)
+            return;
+        drag_painter = painter;
+
         if (!$(this).hasClass("static") && !$(this).hasClass("info")) {
-            if (active_painter == "0") {
+            if (painter == "0") {
                 if ($(this).hasClass("black")) {
                     $(this).removeClass("black");
                     var id = $(this)[0].id;
@@ -2759,7 +2782,7 @@ $(document).ready(function () {
 
                     changed_state = true;
                 }
-            } else if (active_painter == "1") {
+            } else if (painter == "1") {
                 if ($(this).hasClass("white")) {
                     $(this).removeClass("white");
                     var id = $(this)[0].id;
@@ -2789,7 +2812,7 @@ $(document).ready(function () {
                     }
                     changed_state = true;
                 }
-            } else if (active_painter == "2") {
+            } else if (painter == "2") {
                 if (!fill_painter) {
                     $(document).on("mousemove", startDragging);
                     $(document).on("mouseup", stopDragging);
@@ -2813,6 +2836,12 @@ $(document).ready(function () {
         }
     })
 
+    var drag_painter = active_painter;        // Painter used while dragging (inverted with right button)
+
+    $(document).on("contextmenu", "#qr-table td", function (e) {
+        e.preventDefault();
+    })
+
     var startDragging = function (e) {
         var x = e.clientX;
         var y = e.clientY;
@@ -2821,15 +2850,15 @@ $(document).ready(function () {
         if (elem.tagName == "TD" && elem.className.search("static") == -1 && elem.className.search("info") == -1) {
             var i = /\d{1,2}/.exec(id)[0];
             var j = /\d{1,2}$/.exec(id)[0];
-            if (active_painter == "0") {
+            if (drag_painter == "0") {
                 elem.className = "black";
                 qr_array[i][j] = 1;
             }
-            else if (active_painter == "1") {
+            else if (drag_painter == "1") {
                 elem.className = "white";
                 qr_array[i][j] = 0;
             }
-            else if (active_painter == "2") {
+            else if (drag_painter == "2") {
                 elem.className = "";
                 qr_array[i][j] = -1;
             }
@@ -2841,6 +2870,66 @@ $(document).ready(function () {
         $(document).off("mouseup");
         updateHistory("Painter");
     }
+
+    // Move the grid : drag the empty workspace, drag with the middle button, or hold Space and drag.
+    // Native listeners, since stopDragging removes every jQuery mousemove / mouseup handler of document.
+    var space_down = false;
+    var grid_pan = null;
+
+    var isWorkspaceBackground = function (target) {
+        if (target == document.body || target == document.documentElement)
+            return true;
+        return $(target).closest(".main").length > 0 && $(target).closest("td, textarea, #div-extract").length == 0;
+    }
+
+    window.addEventListener("mousedown", function (e) {
+        if ($(".overlay:visible").length)
+            return;
+        var background = isWorkspaceBackground(e.target);
+        if (!background && !$(e.target).closest(".qr-box").length)
+            return;
+        if (!(e.button == 1 || (e.button == 0 && (space_down || background))))
+            return;
+        // capture phase : keep the painter from handling this click
+        e.preventDefault();
+        e.stopPropagation();
+        grid_pan = [e.clientX, e.clientY, grid_offset[0], grid_offset[1]];
+        $("body").addClass("grid-panning");
+    }, true);
+
+    window.addEventListener("mousemove", function (e) {
+        if (grid_pan)
+            setGridOffset(grid_pan[2] + e.clientX - grid_pan[0], grid_pan[3] + e.clientY - grid_pan[1]);
+    });
+
+    window.addEventListener("mouseup", function () {
+        if (grid_pan) {
+            grid_pan = null;
+            $("body").removeClass("grid-panning");
+        }
+    });
+
+    window.addEventListener("dblclick", function (e) {
+        if (!$(".overlay:visible").length && isWorkspaceBackground(e.target))
+            setGridOffset(0, 0);
+    });
+
+    window.addEventListener("keydown", function (e) {
+        if (e.keyCode != 32 || $("input, textarea, select").is(":focus") || $(".overlay:visible").length)
+            return;
+        e.preventDefault();
+        if (document.activeElement && document.activeElement.tagName == "BUTTON")
+            document.activeElement.blur();
+        space_down = true;
+        $("body").addClass("grid-pan-ready");
+    });
+
+    window.addEventListener("keyup", function (e) {
+        if (e.keyCode == 32) {
+            space_down = false;
+            $("body").removeClass("grid-pan-ready");
+        }
+    });
 
     $(document).on("click", "#qr-format-info td", function () {
         if (!$(this).hasClass("static")) {

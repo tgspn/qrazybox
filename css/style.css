@@ -348,6 +348,15 @@ ul {list-style: none;}
 	top: 0;
 }
 
+body.grid-pan-ready, body.grid-pan-ready * {
+	cursor: grab !important;
+}
+
+body.grid-panning, body.grid-panning * {
+	cursor: grabbing !important;
+	user-select: none;
+}
+
 #qr-image-overlay {
 	position: absolute;
 	top: 0;

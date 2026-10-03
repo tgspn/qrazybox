@@ -749,6 +749,340 @@ function importFromImage(src, cb) {
     img.src = src;
 }
 
+/***
+*
+*	Import QR code from raw image without detection (manual grid sampling)
+*
+***/
+var raw_import = {
+    canvas: null,       // Source image (downscaled when too large)
+    pixels: null,       // ImageData of source image
+    corners: [],        // TL, TR, BR, BL corners of QR code (image coordinates)
+    scale: 1,           // Display pixels per image pixel
+    drag: -1,           // Index of corner being dragged
+    selected: 0,        // Index of corner moved by arrow keys
+    invert: false,      // Treat light pixels as dark (inverted QR code)
+    templates: [],      // Cached generate_qr() result per version
+    pending: false      // Redraw already requested
+};
+
+function openRawImport(src) {
+    var img = new Image();
+    img.onload = function () {
+        var ratio = Math.min(1, 2500 / Math.max(img.width, img.height));
+        var width = Math.max(1, Math.round(img.width * ratio));
+        var height = Math.max(1, Math.round(img.height * ratio));
+        var canvas = document.createElement("canvas");
+        var context = canvas.getContext("2d");
+        canvas.width = width;
+        canvas.height = height;
+        // flatten transparency to white
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(img, 0, 0, width, height);
+        try {
+            raw_import.pixels = context.getImageData(0, 0, width, height);
+        } catch (e) {
+            alert(e);
+            return;
+        }
+        raw_import.canvas = canvas;
+        raw_import.invert = $("#raw-import-invert").is(":checked");
+        raw_import.scale = Math.min(740 / width, 560 / height);
+
+        var view = document.getElementById("raw-import-canvas");
+        view.width = Math.round(width * raw_import.scale);
+        view.height = Math.round(height * raw_import.scale);
+
+        $("#div-new").hide();
+        $("#div-raw-import").show();
+        resetRawImportCorners();
+        guessRawImportVersion();
+    }
+    img.onerror = function () {
+        alert("Unable to load image");
+    }
+    img.src = src;
+}
+
+function rawImportLuminance(x, y) {
+    var p = raw_import.pixels;
+    x = Math.min(p.width - 1, Math.max(0, Math.floor(x)));
+    y = Math.min(p.height - 1, Math.max(0, Math.floor(y)));
+    var k = (y * p.width + x) * 4;
+    var lum = 0.299 * p.data[k] + 0.587 * p.data[k + 1] + 0.114 * p.data[k + 2];
+    return raw_import.invert ? 255 - lum : lum;
+}
+
+// Perspective transform from unit square (u = column, v = row) to the quad TL, TR, BR, BL
+function rawImportTransform(c) {
+    var x0 = c[0][0], y0 = c[0][1], x1 = c[1][0], y1 = c[1][1];
+    var x2 = c[2][0], y2 = c[2][1], x3 = c[3][0], y3 = c[3][1];
+    var dx3 = x0 - x1 + x2 - x3, dy3 = y0 - y1 + y2 - y3;
+    var a, b, d, e, g = 0, h = 0;
+
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) {
+        a = x1 - x0; b = x3 - x0;
+        d = y1 - y0; e = y3 - y0;
+    } else {
+        var dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2;
+        var den = dx1 * dy2 - dx2 * dy1;
+        if (Math.abs(den) > 1e-9) {
+            g = (dx3 * dy2 - dx2 * dy3) / den;
+            h = (dx1 * dy3 - dx3 * dy1) / den;
+        }
+        a = x1 - x0 + g * x1; b = x3 - x0 + h * x3;
+        d = y1 - y0 + g * y1; e = y3 - y0 + h * y3;
+    }
+
+    return function (u, v) {
+        var w = g * u + h * v + 1;
+        return [(a * u + b * v + x0) / w, (d * u + e * v + y0) / w];
+    }
+}
+
+function getRawImportTemplate(version) {
+    if (!raw_import.templates[version])
+        raw_import.templates[version] = generate_qr(version);
+    return raw_import.templates[version];
+}
+
+// Place corners around the bounding box of dark pixels
+function resetRawImportCorners() {
+    var p = raw_import.pixels;
+    var minX = p.width, minY = p.height, maxX = -1, maxY = -1;
+
+    for (var y = 0; y < p.height; y++) {
+        for (var x = 0; x < p.width; x++) {
+            if (rawImportLuminance(x, y) < 128) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX < 0) {
+        minX = 0; minY = 0;
+        maxX = p.width - 1; maxY = p.height - 1;
+    }
+
+    raw_import.corners = [[minX, minY], [maxX + 1, minY], [maxX + 1, maxY + 1], [minX, maxY + 1]];
+    drawRawImport();
+}
+
+// Pick the version whose fixed patterns (finder, timing, alignment, version info) best match the image
+function guessRawImportVersion() {
+    var map = rawImportTransform(raw_import.corners);
+    var threshold = (parseInt($("#raw-import-dark").val()) + parseInt($("#raw-import-light").val())) / 2;
+    var best = 1, bestScore = -1;
+
+    for (var version = 1; version <= maxVersion; version++) {
+        var template = getRawImportTemplate(version);
+        var size = 17 + version * 4;
+        var match = 0, total = 0;
+
+        for (var i = 0; i < size; i++) {
+            for (var j = 0; j < size; j++) {
+                if (template[i][j] != 0 && template[i][j] != 1)
+                    continue;
+                var pt = map((j + 0.5) / size, (i + 0.5) / size);
+                var bit = rawImportLuminance(pt[0], pt[1]) < threshold ? 1 : 0;
+                if (bit == template[i][j])
+                    match++;
+                total++;
+            }
+        }
+
+        if (match / total > bestScore) {
+            bestScore = match / total;
+            best = version;
+        }
+    }
+
+    $("#raw-import-version").val(best);
+    $("#raw-import-guess-info").text("Best match: ver. " + best + " (" + Math.round(bestScore * 100) + "% of fixed patterns)");
+    drawRawImport();
+}
+
+function sampleRawImport(version) {
+    var size = 17 + version * 4;
+    var map = rawImportTransform(raw_import.corners);
+    var dark = parseInt($("#raw-import-dark").val());
+    var light = parseInt($("#raw-import-light").val());
+    var area = parseInt($("#raw-import-area").val()) / 100;
+    var steps = 3;
+    var result = [];
+
+    for (var i = 0; i < size; i++) {
+        result[i] = [];
+        for (var j = 0; j < size; j++) {
+            var sum = 0;
+            for (var a = 0; a < steps; a++) {
+                for (var b = 0; b < steps; b++) {
+                    var u = (j + 0.5 + ((b + 0.5) / steps - 0.5) * area) / size;
+                    var v = (i + 0.5 + ((a + 0.5) / steps - 0.5) * area) / size;
+                    var pt = map(u, v);
+                    sum += rawImportLuminance(pt[0], pt[1]);
+                }
+            }
+            var lum = sum / (steps * steps);
+            if (lum < dark)
+                result[i][j] = 1;
+            else if (lum > light)
+                result[i][j] = 0;
+            else
+                result[i][j] = -1;
+        }
+    }
+    return result;
+}
+
+function requestRawImportDraw() {
+    if (raw_import.pending)
+        return;
+    raw_import.pending = true;
+    window.requestAnimationFrame(function () {
+        raw_import.pending = false;
+        drawRawImport();
+    });
+}
+
+function drawRawImport() {
+    var view = document.getElementById("raw-import-canvas");
+    var ctx = view.getContext("2d");
+    var s = raw_import.scale;
+    var version = parseInt($("#raw-import-version").val());
+    var size = 17 + version * 4;
+    var data = sampleRawImport(version);
+    var map = rawImportTransform(raw_import.corners);
+    var toView = function (col, row) {
+        var pt = map(col / size, row / size);
+        return [pt[0] * s, pt[1] * s];
+    };
+    var cell = Math.hypot(raw_import.corners[1][0] - raw_import.corners[0][0], raw_import.corners[1][1] - raw_import.corners[0][1]) * s / size;
+    var count = [0, 0, 0];
+
+    ctx.imageSmoothingEnabled = s < 1;
+    ctx.clearRect(0, 0, view.width, view.height);
+    ctx.drawImage(raw_import.canvas, 0, 0, view.width, view.height);
+
+    if ($("#raw-import-preview").is(":checked")) {
+        for (var i = 0; i < size; i++) {
+            for (var j = 0; j < size; j++) {
+                var p0 = toView(j, i), p1 = toView(j + 1, i), p2 = toView(j + 1, i + 1), p3 = toView(j, i + 1);
+                ctx.fillStyle = data[i][j] == 1 ? "#000" : (data[i][j] == 0 ? "#fff" : "#bdbdbd");
+                ctx.beginPath();
+                ctx.moveTo(p0[0], p0[1]);
+                ctx.lineTo(p1[0], p1[1]);
+                ctx.lineTo(p2[0], p2[1]);
+                ctx.lineTo(p3[0], p3[1]);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+    } else if (cell >= 4) {
+        // grid lines
+        ctx.strokeStyle = "rgba(0, 188, 212, 0.6)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (var k = 0; k <= size; k++) {
+            var a = toView(k, 0), b = toView(k, size);
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+            a = toView(0, k);
+            b = toView(size, k);
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+        }
+        ctx.stroke();
+
+        // sampled value of each module
+        var radius = Math.max(1.5, cell * 0.15);
+        for (var i = 0; i < size; i++) {
+            for (var j = 0; j < size; j++) {
+                var c = toView(j + 0.5, i + 0.5);
+                ctx.beginPath();
+                ctx.arc(c[0], c[1], radius, 0, 2 * Math.PI);
+                if (data[i][j] == 1) {
+                    ctx.fillStyle = "#000";
+                    ctx.strokeStyle = "#fff";
+                } else if (data[i][j] == 0) {
+                    ctx.fillStyle = "#fff";
+                    ctx.strokeStyle = "#000";
+                } else {
+                    ctx.fillStyle = "#f44336";
+                    ctx.strokeStyle = "#fff";
+                }
+                ctx.fill();
+                ctx.stroke();
+            }
+        }
+    }
+
+    for (var i = 0; i < size; i++)
+        for (var j = 0; j < size; j++)
+            count[data[i][j] == 1 ? 0 : (data[i][j] == 0 ? 1 : 2)]++;
+
+    // finder pattern outlines to help alignment
+    ctx.strokeStyle = "#ff9800";
+    ctx.lineWidth = 2;
+    [[0, 0], [size - 7, 0], [0, size - 7]].forEach(function (f) {
+        var p0 = toView(f[0], f[1]), p1 = toView(f[0] + 7, f[1]), p2 = toView(f[0] + 7, f[1] + 7), p3 = toView(f[0], f[1] + 7);
+        ctx.beginPath();
+        ctx.moveTo(p0[0], p0[1]);
+        ctx.lineTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+        ctx.lineTo(p3[0], p3[1]);
+        ctx.closePath();
+        ctx.stroke();
+    });
+
+    // corner handles
+    var labels = ["TL", "TR", "BR", "BL"];
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (var n = 0; n < 4; n++) {
+        var x = raw_import.corners[n][0] * s, y = raw_import.corners[n][1] * s;
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, 2 * Math.PI);
+        ctx.fillStyle = n == raw_import.selected ? "rgba(233, 30, 99, 0.85)" : "rgba(3, 169, 244, 0.85)";
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.fillText(labels[n], x, y);
+    }
+
+    $("#raw-import-stats").text(size + "x" + size + " modules : " + count[0] + " black, " + count[1] + " white, " + count[2] + " grey (unknown)");
+}
+
+function rawImportPointer(e) {
+    var view = document.getElementById("raw-import-canvas");
+    var rect = view.getBoundingClientRect();
+    return [
+        (e.clientX - rect.left) * (view.width / rect.width) / raw_import.scale,
+        (e.clientY - rect.top) * (view.height / rect.height) / raw_import.scale
+    ];
+}
+
+function nearestRawImportCorner(pt) {
+    var nearest = -1, nearestDist = 15 / raw_import.scale;
+    for (var n = 0; n < 4; n++) {
+        var dist = Math.hypot(raw_import.corners[n][0] - pt[0], raw_import.corners[n][1] - pt[1]);
+        if (dist <= nearestDist) {
+            nearest = n;
+            nearestDist = dist;
+        }
+    }
+    return nearest;
+}
+
+function moveRawImportCorner(index, x, y) {
+    var p = raw_import.pixels;
+    raw_import.corners[index] = [Math.min(p.width, Math.max(0, x)), Math.min(p.height, Math.max(0, y))];
+    requestRawImportDraw();
+}
+
 
 /***
 *
@@ -1566,6 +1900,129 @@ $(document).ready(function () {
             };
             reader.readAsText(this.files[0]);
         }
+    })
+
+    $("#new-btn-import-raw").click(function () {
+        $("#import-raw").click();
+        return false;
+    })
+
+    $("#import-raw").change(function () {
+        if (this.files && this.files[0]) {
+            var reader = new FileReader();
+
+            reader.onload = function (e) {
+                openRawImport(e.target.result);
+            }
+            reader.readAsDataURL(this.files[0]);
+        }
+        // allow selecting the same file again
+        $(this).val("");
+    })
+
+    for (var v = 1; v <= maxVersion; v++) {
+        var vs = 17 + v * 4;
+        $("#raw-import-version").append("<option value='" + v + "'>ver. " + v + " (" + vs + "x" + vs + ")</option>");
+    }
+
+    $("#raw-import-version, #raw-import-preview").change(function () {
+        drawRawImport();
+    })
+
+    $("#raw-import-invert").change(function () {
+        raw_import.invert = $(this).is(":checked");
+        drawRawImport();
+    })
+
+    $("#raw-import-dark, #raw-import-light, #raw-import-area").on("input change", function () {
+        var dark = parseInt($("#raw-import-dark").val());
+        var light = parseInt($("#raw-import-light").val());
+        if (dark > light) {
+            if (this.id == "raw-import-dark")
+                $("#raw-import-light").val(dark);
+            else
+                $("#raw-import-dark").val(light);
+        }
+        $("#raw-import-dark-val").text($("#raw-import-dark").val());
+        $("#raw-import-light-val").text($("#raw-import-light").val());
+        $("#raw-import-area-val").text($("#raw-import-area").val() + "%");
+        requestRawImportDraw();
+    })
+
+    $("#btn-raw-import-guess").click(function () {
+        guessRawImportVersion();
+    })
+
+    $("#btn-raw-import-reset").click(function () {
+        resetRawImportCorners();
+    })
+
+    $("#btn-raw-import-cancel").click(function () {
+        $("#div-raw-import").hide();
+        $("#div-new").show();
+    })
+
+    $("#btn-raw-import-apply").click(function () {
+        var version = parseInt($("#raw-import-version").val());
+        var data = sampleRawImport(version);
+
+        $("#div-raw-import").hide();
+        qr_version = version;
+        qr_size = 17 + version * 4;
+        generateTable(qr_version);
+        qr_format_array = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        if ($("#btn-switch-mode").hasClass("active")) {
+            toggleResult();
+        }
+        if ($("#div-extract").css("display") != "none") {
+            $("#btn-tools-extract").trigger("click");
+        }
+        brute_force_mode = false;
+        extract_info_mode = false;
+        if (analysis_mode) {
+            $("#tools-data-analysis").trigger("click");
+        }
+        $("#tools-brute-force, #tools-unmasking").removeClass("active");
+        $("#qr-overlay").html("");
+        $("#box-tools-masking").hide();
+        updateQRArray(data);
+        clearHistory();
+        updateHistory("Load from raw image");
+        refreshTable();
+        changed_state = true;
+    })
+
+    var raw_import_view = document.getElementById("raw-import-canvas");
+
+    raw_import_view.addEventListener("pointerdown", function (e) {
+        var corner = nearestRawImportCorner(rawImportPointer(e));
+        if (corner >= 0) {
+            raw_import.drag = corner;
+            raw_import.selected = corner;
+            // keep arrow keys for the corner instead of a focused control
+            if (document.activeElement)
+                document.activeElement.blur();
+            raw_import_view.setPointerCapture(e.pointerId);
+            requestRawImportDraw();
+            e.preventDefault();
+        }
+    })
+
+    raw_import_view.addEventListener("pointermove", function (e) {
+        var pt = rawImportPointer(e);
+        if (raw_import.drag >= 0) {
+            moveRawImportCorner(raw_import.drag, pt[0], pt[1]);
+        } else {
+            raw_import_view.style.cursor = nearestRawImportCorner(pt) >= 0 ? "move" : "crosshair";
+        }
+    })
+
+    raw_import_view.addEventListener("pointerup", function () {
+        raw_import.drag = -1;
+    })
+
+    raw_import_view.addEventListener("pointercancel", function () {
+        raw_import.drag = -1;
     })
 
     $("#menu-new").click(function () {
@@ -2427,6 +2884,18 @@ $(document).ready(function () {
     })
 
     $(document).keydown(function (e) {
+        // Raw image import : arrow keys nudge the selected corner
+        if ($("#div-raw-import").is(":visible")) {
+            var step = e.shiftKey ? 10 : 1;
+            var delta = { 37: [-step, 0], 38: [0, -step], 39: [step, 0], 40: [0, step] }[e.keyCode];
+            if (delta && !$("select, input").is(":focus")) {
+                e.preventDefault();
+                var corner = raw_import.corners[raw_import.selected];
+                moveRawImportCorner(raw_import.selected, corner[0] + delta[0], corner[1] + delta[1]);
+            }
+            return;
+        }
+
         if (!$("input[type=text], textarea").is(":focus") && !$("#tools-extract").hasClass("active")) {
 
             //Shortcut key : Tab

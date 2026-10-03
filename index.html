@@ -227,9 +227,11 @@
 				<button id="new-btn-new" class="big">New blank QR code</button>
 				<button id="new-btn-import-img" class="big">Import from Image</button>
 				<button id="new-btn-import-txt" class="big">Import from Text</button>
+				<button id="new-btn-import-raw" class="big">Import Raw Image</button>
 				<div class="clear"></div>
 				<input type="file" class="invisible" id="import-img">
 				<input type="file" class="invisible" id="import-txt">
+				<input type="file" class="invisible" id="import-raw" accept="image/*">
 				<canvas id="hidden-canvas" class="hide"></canvas>
 				<img src="#" id="hidden-img" class="hide">
 				<textarea id="hidden-txt" class="hide"></textarea>
@@ -243,6 +245,53 @@
 		</center>
 	</div>
 	<!-- END NEW OVERLAY -->
+
+	<!-- START RAW IMAGE IMPORT OVERLAY -->
+	<div class="overlay hide" id="div-raw-import">
+		<center>
+			<div class="box large">
+				<h3>Import Raw Image</h3>
+				<h6>Drag the corner handles (TL, TR, BR, BL) to the outer corners of the QR code, without the quiet zone. Arrow keys nudge the last moved handle (Shift for 10px). Each module is sampled at its center: dark becomes black, light becomes white and anything in between becomes grey (unknown), so damaged areas can be reconstructed later.</h6>
+				<div class="space small"></div>
+				<div class="raw-import-view">
+					<canvas id="raw-import-canvas"></canvas>
+				</div>
+				<div class="raw-import-controls">
+					<div>
+						<label for="raw-import-version">Version</label>
+						<select id="raw-import-version"></select>
+						<button id="btn-raw-import-guess" class="small">Auto-detect</button>
+						<span id="raw-import-guess-info"></span>
+					</div>
+					<div>
+						<label for="raw-import-dark">Black below</label>
+						<input type="range" id="raw-import-dark" min="0" max="255" value="100">
+						<span id="raw-import-dark-val">100</span>
+					</div>
+					<div>
+						<label for="raw-import-light">White above</label>
+						<input type="range" id="raw-import-light" min="0" max="255" value="155">
+						<span id="raw-import-light-val">155</span>
+					</div>
+					<div>
+						<label for="raw-import-area">Sample area</label>
+						<input type="range" id="raw-import-area" min="10" max="90" value="50">
+						<span id="raw-import-area-val">50%</span>
+					</div>
+					<div>
+						<label><input type="checkbox" id="raw-import-invert"> Inverted colors</label>
+						<label><input type="checkbox" id="raw-import-preview"> Preview result</label>
+						<button id="btn-raw-import-reset" class="small">Reset corners</button>
+					</div>
+					<h6 id="raw-import-stats"></h6>
+				</div>
+				<div class="space small"></div>
+				<button id="btn-raw-import-apply">Import</button>
+				<button id="btn-raw-import-cancel">Cancel</button>
+			</div>
+		</center>
+	</div>
+	<!-- END RAW IMAGE IMPORT OVERLAY -->
 
 	<!-- START SAVE OVERLAY -->
 	<div class="overlay hide" id="div-save">

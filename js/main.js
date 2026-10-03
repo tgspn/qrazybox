@@ -2126,7 +2126,8 @@ $(document).ready(function () {
     var raw_import_view = document.getElementById("raw-import-canvas");
 
     raw_import_view.addEventListener("pointerdown", function (e) {
-        var corner = nearestRawImportCorner(rawImportPointer(e));
+        // Ctrl + drag always moves the view, even over a corner handle
+        var corner = (e.ctrlKey || e.metaKey) ? -1 : nearestRawImportCorner(rawImportPointer(e));
         if (corner >= 0) {
             raw_import.drag = corner;
             raw_import.selected = corner;
@@ -2344,11 +2345,9 @@ $(document).ready(function () {
         }
     })
 
-    // Ctrl + mouse wheel (or trackpad pinch) over the grid changes module size, keeping the module under the cursor in place
+    // Mouse wheel (or trackpad pinch) over the grid changes module size, keeping the module under the cursor in place
     var zoom_wheel_delta = 0;
     $(".qr-box")[0].addEventListener("wheel", function (e) {
-        if (!e.ctrlKey && !e.metaKey)
-            return;
         e.preventDefault();
 
         zoom_wheel_delta += e.deltaMode == 1 ? e.deltaY * 33 : e.deltaY;
@@ -2958,7 +2957,7 @@ $(document).ready(function () {
         updateHistory("Painter");
     }
 
-    // Move the grid : drag the empty workspace, drag with the middle button, or hold Space and drag.
+    // Move the grid : drag the empty workspace, Ctrl + drag, drag with the middle button, or hold Space and drag.
     // Native listeners, since stopDragging removes every jQuery mousemove / mouseup handler of document.
     var space_down = false;
     var grid_pan = null;
@@ -2994,7 +2993,7 @@ $(document).ready(function () {
         if (!background && !$(e.target).closest(".qr-box").length)
             return;
 
-        if (e.button == 1 || (e.button == 0 && (space_down || background))) {
+        if (e.button == 1 || (e.button == 0 && (space_down || e.ctrlKey || e.metaKey || background))) {
             e.preventDefault();
             e.stopPropagation();
             startGridPan(e.clientX, e.clientY);
@@ -3040,20 +3039,31 @@ $(document).ready(function () {
     });
 
     window.addEventListener("keydown", function (e) {
-        if (e.keyCode != 32 || $("input, textarea, select").is(":focus") || $(".overlay:visible").length)
+        if ($("input, textarea, select").is(":focus") || $(".overlay:visible").length)
             return;
-        e.preventDefault();
-        if (document.activeElement && document.activeElement.tagName == "BUTTON")
-            document.activeElement.blur();
-        space_down = true;
-        $("body").addClass("grid-pan-ready");
+        if (e.keyCode == 32) {
+            e.preventDefault();
+            if (document.activeElement && document.activeElement.tagName == "BUTTON")
+                document.activeElement.blur();
+            space_down = true;
+            $("body").addClass("grid-pan-ready");
+        } else if (e.keyCode == 17 || e.key == "Meta") {
+            // Ctrl : only the cursor hint, Ctrl shortcuts keep working
+            $("body").addClass("grid-pan-ready");
+        }
     });
 
     window.addEventListener("keyup", function (e) {
-        if (e.keyCode == 32) {
+        if (e.keyCode == 32)
             space_down = false;
+        if (!space_down && !e.ctrlKey && !e.metaKey)
             $("body").removeClass("grid-pan-ready");
-        }
+    });
+
+    // keys released while the window was not focused
+    window.addEventListener("blur", function () {
+        space_down = false;
+        $("body").removeClass("grid-pan-ready");
     });
 
     $(document).on("click", "#qr-format-info td", function () {

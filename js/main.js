@@ -809,6 +809,9 @@ var raw_import = {
     corners: [],        // TL, TR, BR, BL corners of QR code (image coordinates)
     scale: 1,           // Display pixels per image pixel
     drag: -1,           // Index of corner being dragged
+    zoom: 1,            // View zoom (1 = whole image)
+    offset: [0, 0],     // Image coordinates of view top-left corner
+    pan: null,          // Pan in progress : [pointer x, pointer y, offset x, offset y]
     selected: 0,        // Index of corner moved by arrow keys
     invert: false,      // Treat light pixels as dark (inverted QR code)
     templates: [],      // Cached generate_qr() result per version
@@ -838,6 +841,8 @@ function openRawImport(src) {
         raw_import.canvas = canvas;
         raw_import.invert = $("#raw-import-invert").is(":checked");
         raw_import.scale = Math.min(740 / width, 560 / height);
+        raw_import.zoom = 1;
+        raw_import.offset = [0, 0];
 
         var view = document.getElementById("raw-import-canvas");
         view.width = Math.round(width * raw_import.scale);
@@ -1000,21 +1005,22 @@ function requestRawImportDraw() {
 function drawRawImport() {
     var view = document.getElementById("raw-import-canvas");
     var ctx = view.getContext("2d");
-    var s = raw_import.scale;
+    var s = raw_import.scale * raw_import.zoom;
+    var ox = raw_import.offset[0], oy = raw_import.offset[1];
     var version = parseInt($("#raw-import-version").val());
     var size = 17 + version * 4;
     var data = sampleRawImport(version);
     var map = rawImportTransform(raw_import.corners);
     var toView = function (col, row) {
         var pt = map(col / size, row / size);
-        return [pt[0] * s, pt[1] * s];
+        return [(pt[0] - ox) * s, (pt[1] - oy) * s];
     };
     var cell = Math.hypot(raw_import.corners[1][0] - raw_import.corners[0][0], raw_import.corners[1][1] - raw_import.corners[0][1]) * s / size;
     var count = [0, 0, 0];
 
     ctx.imageSmoothingEnabled = s < 1;
     ctx.clearRect(0, 0, view.width, view.height);
-    ctx.drawImage(raw_import.canvas, 0, 0, view.width, view.height);
+    ctx.drawImage(raw_import.canvas, ox, oy, view.width / s, view.height / s, 0, 0, view.width, view.height);
 
     if ($("#raw-import-preview").is(":checked")) {
         for (var i = 0; i < size; i++) {
@@ -1093,7 +1099,7 @@ function drawRawImport() {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     for (var n = 0; n < 4; n++) {
-        var x = raw_import.corners[n][0] * s, y = raw_import.corners[n][1] * s;
+        var x = (raw_import.corners[n][0] - ox) * s, y = (raw_import.corners[n][1] - oy) * s;
         ctx.beginPath();
         ctx.arc(x, y, 10, 0, 2 * Math.PI);
         ctx.fillStyle = n == raw_import.selected ? "rgba(233, 30, 99, 0.85)" : "rgba(3, 169, 244, 0.85)";
@@ -1103,6 +1109,32 @@ function drawRawImport() {
     }
 
     $("#raw-import-stats").text(size + "x" + size + " modules : " + count[0] + " black, " + count[1] + " white, " + count[2] + " grey (unknown)");
+    $("#raw-import-zoom-val").text(Math.round(raw_import.zoom * 100) + "%");
+}
+
+// Keep the view inside the image
+function clampRawImportView() {
+    var view = document.getElementById("raw-import-canvas");
+    var s = raw_import.scale * raw_import.zoom;
+    var p = raw_import.pixels;
+    raw_import.offset[0] = Math.min(Math.max(0, p.width - view.width / s), Math.max(0, raw_import.offset[0]));
+    raw_import.offset[1] = Math.min(Math.max(0, p.height - view.height / s), Math.max(0, raw_import.offset[1]));
+}
+
+// Zoom keeping the image point under (viewX, viewY) in place; default is the view center
+function zoomRawImport(factor, viewX, viewY) {
+    var view = document.getElementById("raw-import-canvas");
+    if (viewX === undefined) {
+        viewX = view.width / 2;
+        viewY = view.height / 2;
+    }
+    var s = raw_import.scale * raw_import.zoom;
+    var x = raw_import.offset[0] + viewX / s, y = raw_import.offset[1] + viewY / s;
+    raw_import.zoom = Math.min(32, Math.max(1, raw_import.zoom * factor));
+    s = raw_import.scale * raw_import.zoom;
+    raw_import.offset = [x - viewX / s, y - viewY / s];
+    clampRawImportView();
+    requestRawImportDraw();
 }
 
 // Image of the QR code area with perspective removed, one square per module
@@ -1133,17 +1165,25 @@ function rectifyRawImport(version) {
     return canvas.toDataURL("image/jpeg", 0.85);
 }
 
-function rawImportPointer(e) {
+// Pointer position in canvas pixels
+function rawImportViewPointer(e) {
     var view = document.getElementById("raw-import-canvas");
     var rect = view.getBoundingClientRect();
     return [
-        (e.clientX - rect.left) * (view.width / rect.width) / raw_import.scale,
-        (e.clientY - rect.top) * (view.height / rect.height) / raw_import.scale
+        (e.clientX - rect.left) * (view.width / rect.width),
+        (e.clientY - rect.top) * (view.height / rect.height)
     ];
 }
 
+// Pointer position in image coordinates
+function rawImportPointer(e) {
+    var pt = rawImportViewPointer(e);
+    var s = raw_import.scale * raw_import.zoom;
+    return [raw_import.offset[0] + pt[0] / s, raw_import.offset[1] + pt[1] / s];
+}
+
 function nearestRawImportCorner(pt) {
-    var nearest = -1, nearestDist = 15 / raw_import.scale;
+    var nearest = -1, nearestDist = 15 / (raw_import.scale * raw_import.zoom);
     for (var n = 0; n < 4; n++) {
         var dist = Math.hypot(raw_import.corners[n][0] - pt[0], raw_import.corners[n][1] - pt[1]);
         if (dist <= nearestDist) {
@@ -2083,6 +2123,13 @@ $(document).ready(function () {
             raw_import_view.setPointerCapture(e.pointerId);
             requestRawImportDraw();
             e.preventDefault();
+        } else if (raw_import.zoom > 1) {
+            // drag empty area to pan
+            var vp = rawImportViewPointer(e);
+            raw_import.pan = [vp[0], vp[1], raw_import.offset[0], raw_import.offset[1]];
+            raw_import_view.setPointerCapture(e.pointerId);
+            raw_import_view.style.cursor = "grabbing";
+            e.preventDefault();
         }
     })
 
@@ -2090,17 +2137,47 @@ $(document).ready(function () {
         var pt = rawImportPointer(e);
         if (raw_import.drag >= 0) {
             moveRawImportCorner(raw_import.drag, pt[0], pt[1]);
+        } else if (raw_import.pan) {
+            var vp = rawImportViewPointer(e);
+            var s = raw_import.scale * raw_import.zoom;
+            raw_import.offset = [raw_import.pan[2] - (vp[0] - raw_import.pan[0]) / s, raw_import.pan[3] - (vp[1] - raw_import.pan[1]) / s];
+            clampRawImportView();
+            requestRawImportDraw();
+        } else if (nearestRawImportCorner(pt) >= 0) {
+            raw_import_view.style.cursor = "move";
         } else {
-            raw_import_view.style.cursor = nearestRawImportCorner(pt) >= 0 ? "move" : "crosshair";
+            raw_import_view.style.cursor = raw_import.zoom > 1 ? "grab" : "crosshair";
         }
     })
 
     raw_import_view.addEventListener("pointerup", function () {
         raw_import.drag = -1;
+        raw_import.pan = null;
     })
 
     raw_import_view.addEventListener("pointercancel", function () {
         raw_import.drag = -1;
+        raw_import.pan = null;
+    })
+
+    raw_import_view.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        var vp = rawImportViewPointer(e);
+        zoomRawImport(e.deltaY < 0 ? 1.25 : 0.8, vp[0], vp[1]);
+    }, { passive: false })
+
+    $("#btn-raw-import-zoom-in").click(function () {
+        zoomRawImport(1.5);
+    })
+
+    $("#btn-raw-import-zoom-out").click(function () {
+        zoomRawImport(1 / 1.5);
+    })
+
+    $("#btn-raw-import-zoom-fit").click(function () {
+        raw_import.zoom = 1;
+        raw_import.offset = [0, 0];
+        requestRawImportDraw();
     })
 
     $("#menu-new").click(function () {

@@ -258,19 +258,12 @@
 		<center>
 			<div class="box large">
 				<h3>Import Raw Image</h3>
-				<h6>Drag the corner handles (TL, TR, BR, BL) to the outer corners of the QR code, without the quiet zone. Mouse wheel zooms, drag an empty area to pan when zoomed in. Arrow keys nudge the last moved handle (Shift for 10px). Each module is sampled at its center: dark becomes black, light becomes white and anything in between becomes grey (unknown), so damaged areas can be reconstructed later.</h6>
+				<h6>Drag the corner handles (TL, TR, BR, BL) to the outer corners of the QR code, without the quiet zone. Arrow keys nudge the last moved handle (Shift for 10px). Each module is sampled at its center: dark becomes black, light becomes white and anything in between becomes grey (unknown), so damaged areas can be reconstructed later.</h6>
 				<div class="space small"></div>
 				<div class="raw-import-view">
 					<canvas id="raw-import-canvas"></canvas>
 				</div>
 				<div class="raw-import-controls">
-					<div>
-						<label>Zoom</label>
-						<button id="btn-raw-import-zoom-out" class="small">-</button>
-						<button id="btn-raw-import-zoom-in" class="small">+</button>
-						<button id="btn-raw-import-zoom-fit" class="small">Fit</button>
-						<span id="raw-import-zoom-val">100%</span>
-					</div>
 					<div>
 						<label for="raw-import-version">Version</label>
 						<select id="raw-import-version"></select>

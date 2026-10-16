@@ -357,6 +357,10 @@
 						<h5>Padding Bits Recovery</h5>
 						<h6>Recover missing bits by placing terminator and padding bits</h6>
 					</div>
+					<div id="tools-smart-recovery">
+						<h5>Smart Recovery (<i>Experimental</i>)</h5>
+						<h6>Recover unknown codewords from the known bits, the data sequence structure and Reed-Solomon parity</h6>
+					</div>
 					<div id="tools-data-analysis">
 						<h5>Data Sequence Analysis (<i>Experimental</i>)</h5>
 						<h6>Analyze data sequence of QR code</h6>
@@ -618,6 +622,10 @@
 						<h5 class="left">Warning : </h5>
 						<textarea spellcheck="false" readonly style="width:100%;"></textarea>
 					</div>
+					<div id="div-patch-rec-info" class="hide">
+						<h5 class="left">Details : </h5>
+						<textarea spellcheck="false" readonly style="width:100%;" rows="6"></textarea>
+					</div>
 					<h6><i>Note : Recovered modules are marked with green color</i></h6>
 					<div class="space"></div>
 					<button id="btn-patch-rec-apply">Apply</button>
@@ -645,6 +653,7 @@
 	<script type="text/javascript" src="js/table.js"></script>
 	<script type="text/javascript" src="js/sqrd.js"></script>
 	<script type="text/javascript" src="js/reedsolomon.js"></script>
+	<script type="text/javascript" src="js/recovery.js"></script>
 	<script type="text/javascript" src="js/qr.js"></script>
 	<script type="text/javascript" src="js/external/jsqrcode/grid.js"></script>
 	<script type="text/javascript" src="js/external/jsqrcode/version.js"></script>

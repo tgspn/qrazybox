@@ -329,7 +329,10 @@ function getFormatInfo(data) {
     var error_correction_level = parseInt(format_info_unmask.substring(0, 2), 2);
     var mask_pattern = parseInt(format_info_unmask.substring(2, 5), 2);
 
-    return { ecc: error_correction_level, mask: mask_pattern };
+    // Unknown bits are XORed as 0 above, so check them before unmasking
+    var known = format_info.slice(0, 5).indexOf("?") == -1;
+
+    return { ecc: error_correction_level, mask: mask_pattern, known: known };
 }
 
 function maskData(data_array, mask_pattern) {
@@ -445,18 +448,19 @@ function readRSBlocks(data, version, ecc) {
     return rs_blocks;
 }
 
+var char_count_bits_table = {
+    "0001": [10, 12, 14],
+    "0010": [9, 11, 13],
+    "0100": [8, 16, 16],
+    "1000": [8, 10, 12]
+};
+
 // Length of the character count indicator of a mode ("0001", "0010", "0100" or "1000")
 function getCharCountBits(mode, version) {
 
     var range = version <= 9 ? 0 : (version <= 26 ? 1 : 2);
-    var bits = {
-        "0001": [10, 12, 14],
-        "0010": [9, 11, 13],
-        "0100": [8, 16, 16],
-        "1000": [8, 10, 12]
-    };
 
-    return bits[mode][range];
+    return char_count_bits_table[mode][range];
 }
 
 // Length of the data bits of a segment holding `count` characters

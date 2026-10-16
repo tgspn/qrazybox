@@ -1494,8 +1494,13 @@ function patchingRecovery(result) {
     var warning = 0;
 
     $("#qr-dummy").html("");
-    $("#div-patch-rec-warning, #div-patch-rec-error").hide();
+    $("#div-patch-rec-warning, #div-patch-rec-error, #div-patch-rec-info").hide();
     $("#div-patch-rec-data, #btn-patch-rec-apply").show()
+
+    if (result.info) {
+        $("#div-patch-rec-info").show();
+        $("#div-patch-rec-info textarea").val(result.info);
+    }
 
     if (typeof result == "string") {
         $("#div-patch-rec-error").show();
@@ -2618,6 +2623,14 @@ $(document).ready(function () {
     $("#tools-pad-recovery").click(function () {
         patchingRecovery(recoverPaddingBits(JSON.parse(JSON.stringify(qr_array))));
         $("#div-patching-recovery-title").text("Padding Bits Recovery");
+        $("#div-patching-recovery").show();
+
+        $("#div-tools").hide();
+    })
+
+    $("#tools-smart-recovery").click(function () {
+        patchingRecovery(smartRecovery(JSON.parse(JSON.stringify(qr_array))));
+        $("#div-patching-recovery-title").text("Smart Recovery");
         $("#div-patching-recovery").show();
 
         $("#div-tools").hide();

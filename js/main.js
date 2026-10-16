@@ -1560,12 +1560,18 @@ function reedSolomonDecode(data, nysm) {
     //console.log('nysm: '+nysm, 'data: '+data);
 
     for (var i = 0; i < data.length; i++) {
+        // "?" marks an unknown codeword (erasure); every other value is a known byte, 0 included
+        var msg = [];
         var err_pos = [];
         for (var j = 0; j < data[i].length; j++) {
-            if (data[i][j] == 0)
+            if (data[i][j] == "?") {
                 err_pos.push(j);
+                msg.push(0);
+            } else {
+                msg.push(parseInt(data[i][j]));
+            }
         }
-        var decoded = RS.decode(data[i], nysm, err_pos);
+        var decoded = RS.decode(msg, nysm, err_pos);
 
         if (typeof decoded == "string") {
             $("#rs-decoder-error").text("ERROR: " + decoded).removeClass("invisible");
@@ -1655,19 +1661,10 @@ function generateDataBlocks() {
 
     qr_data_block = [];
 
-    var format_info = getFormatInfo(qr_array);
-    var mask_pattern = format_info.mask;
-    var ecc_level = format_info.ecc;
-
-    if (RS_block_num_table[qr_version - 1][ecc_level] > 1) {
-        alert('Interleaved blocks is not supported yet!');
-        return;
-    }
-
-    var unmasked_data_array = maskData(qr_array, mask_pattern);
-
+    // Codewords come deinterleaved: data of every RS block in sequence, then the error correction
     var decoded_data = readDataBlock(qr_array);
     var data_block = decoded_data.blocks;
+    var rs_blocks = decoded_data.rs_blocks;
     module_order = decoded_data.module_order;
 
     while (data_block.length != 1) {
@@ -1693,13 +1690,14 @@ function generateDataBlocks() {
 
         if (enc_mode == "Numeric mode") {
 
-            var data_length = parseInt(data_block.substring(0, 10), 2);
+            var count_bits = getCharCountBits("0001", qr_version);
+            var data_length = parseInt(data_block.substring(0, count_bits), 2);
             pushBlock(
                 "Char. count indicator",
-                data_block.substring(0, 10),
+                data_block.substring(0, count_bits),
                 data_length
             );
-            data_block = data_block.substring(10);
+            data_block = data_block.substring(count_bits);
 
             for (var k = 0; k < Math.floor((data_length + 2) / 3); k++) {
 
@@ -1735,13 +1733,14 @@ function generateDataBlocks() {
 
         } else if (enc_mode == "Alphanumeric mode") {
 
-            var data_length = parseInt(data_block.substring(0, 9), 2);
+            var count_bits = getCharCountBits("0010", qr_version);
+            var data_length = parseInt(data_block.substring(0, count_bits), 2);
             pushBlock(
                 "Char. count indicator",
-                data_block.substring(0, 9),
+                data_block.substring(0, count_bits),
                 data_length
             );
-            data_block = data_block.substring(9);
+            data_block = data_block.substring(count_bits);
 
             for (var i = 0; i < Math.floor((data_length + 1) / 2); i++) {
 
@@ -1773,13 +1772,14 @@ function generateDataBlocks() {
 
         } else if (enc_mode == "Binary mode") {
 
-            var data_length = parseInt(data_block.substring(0, 8), 2);
+            var count_bits = getCharCountBits("0100", qr_version);
+            var data_length = parseInt(data_block.substring(0, count_bits), 2);
             pushBlock(
                 "Char. count indicator",
-                data_block.substring(0, 8),
+                data_block.substring(0, count_bits),
                 data_length
             );
-            data_block = data_block.substring(8);
+            data_block = data_block.substring(count_bits);
 
             for (var i = 0; i < data_length; i++) {
                 temp_value = data_block.substring(0, 8);
@@ -1793,34 +1793,38 @@ function generateDataBlocks() {
                 );
             }
 
-        } else if (enc_mode == "Terminator") {
-
-
         } else {
+            // Terminator: everything left in the data codewords is padding
             break;
         }
     }
 
-    //console.log(data_block);
+    var ec_bits = 0;
+    for (var i = 0; i < rs_blocks.length; i++)
+        ec_bits += rs_blocks[i].ec.length * 8;
 
-
-    var error_correction_level = getFormatInfo(qr_array).ecc;
-    var offset = data_block.length - error_correction_code_table[qr_version - 1][error_correction_level] * 8;
-
-    pushBlock(
-        "Padding bits",
-        data_block.substring(0, offset),
-        ""
-    );
-    data_block = data_block.substring(offset);
-
-    while (data_block.length >= 8) {
+    var offset = data_block.length - ec_bits;
+    if (offset > 0) {
         pushBlock(
-            "Error correction",
-            data_block.substring(0, 8),
-            parseInt(data_block.substring(0, 8), 2)
+            "Padding bits",
+            data_block.substring(0, offset),
+            ""
         );
-        data_block = data_block.substring(8);
+        data_block = data_block.substring(offset);
+    }
+
+    // Skip labeling when the message overran the data codewords
+    if (data_block.length == ec_bits) {
+        for (var i = 0; i < rs_blocks.length; i++) {
+            for (var j = 0; j < rs_blocks[i].ec.length; j++) {
+                var bits = rs_blocks[i].ec[j].bits;
+                pushBlock(
+                    rs_blocks.length > 1 ? "Error correction (block " + (i + 1) + ")" : "Error correction",
+                    bits,
+                    parseInt(bits, 2)
+                );
+            }
+        }
     }
 
     console.log(qr_data_block);
@@ -2654,7 +2658,7 @@ $(document).ready(function () {
 
         for (var i = 1; i <= nblocks; i++) {
             html += "<h5>Encoded Reed-Solomon blocks [" + i + "] : </h5>\
-                    <input type='text' class='rs-decoder-input' id='rs-decoder-input-"+ i + "' value='" + rs_block[i - 1].replace(/[^0-9,]/g, "") + "'>\
+                    <input type='text' class='rs-decoder-input' id='rs-decoder-input-"+ i + "' value='" + rs_block[i - 1].replace(/[^0-9,?]/g, "") + "'>\
                     <div class='clear'></div>";
         }
         $("#rs-decoder-page-1 div").html(html);
@@ -2671,7 +2675,7 @@ $(document).ready(function () {
         var nysm = error_correction_code_table[qr_version - 1][ecc];
         $(this).hide();
         $(".rs-decoder-input").each(function () {
-            rs_blocks.push($(this).val().replace(/[^0-9,]+/g, "").split(","));
+            rs_blocks.push($(this).val().replace(/[^0-9,?]+/g, "").split(","));
         })
 
         reedSolomonDecode(rs_blocks, nysm);

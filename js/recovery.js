@@ -887,7 +887,13 @@ function srRecoverPass(data_array, limits) {
                     erasures.push(j);
                 return values.length == 1 ? values[0] : 0;
             });
-            var decoded = RS.decode(msg, nysm, erasures);
+            // The decoder can throw on some inputs instead of returning an error message
+            var decoded;
+            try {
+                decoded = RS.decode(msg, nysm, erasures);
+            } catch (e) {
+                decoded = String(e);
+            }
             if (typeof decoded != "string") {
                 res = { status: "solved", solutions: [RS.encode(decoded, nysm)], count: 1 };
                 line += " (corrected as errors and erasures)";

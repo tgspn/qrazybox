@@ -741,9 +741,65 @@ function srToBits(value) {
     return ("00000000" + value.toString(2)).slice(-8);
 }
 
+/*
+    About how many unknown modules must still be identified in a block before it can be
+    solved: the candidates hold more possibilities than the parity can check (sum of log2 of
+    the candidate counts against 8 bits per error correction codeword), or the search over
+    the free unknowns is over the limit. Each identified module removes about one bit.
+*/
+function srModulesNeeded(candidates, nysm, limits) {
+
+    var bits = candidates
+        .filter(function (values) { return values.length > 1; })
+        .map(function (values) { return Math.log2(values.length); })
+        .sort(function (x, y) { return x - y; });
+    var sum = function (list) { return list.reduce(function (t, x) { return t + x; }, 0); };
+    var free = bits.slice(0, Math.max(0, bits.length - nysm));
+
+    return Math.max(1, Math.ceil(sum(bits) - 8 * nysm), Math.ceil(sum(free) - Math.log2(limits.search)));
+}
+
+/*
+    Recovered codewords narrow down the others (e.g. once the end of the message is known,
+    the padding of other blocks is too), so passes are repeated while they recover more.
+*/
 function smartRecovery(data_array, limits) {
 
     limits = limits || SR_LIMITS;
+
+    var pass = srRecoverPass(data_array, limits);
+    if (typeof pass == "string")
+        return pass;
+
+    var first = pass;
+    var lines = pass.lines.slice();
+    for (var round = 2; round <= 10 && pass.status.indexOf("open") != -1; round++) {
+        var next = srRecoverPass(pass.result_array, limits);
+        if (typeof next == "string" || next.after == pass.after)
+            break;
+        for (var b = 0; b < lines.length; b++) {
+            if (next.status[b] == "recovered")
+                lines[b] = next.lines[b] + " (round " + round + ", using the codewords recovered before)";
+            else if (next.status[b] == "open")
+                lines[b] = next.lines[b];
+        }
+        pass = next;
+    }
+
+    var info = first.header.concat(lines);
+    if (pass.message)
+        info.push(pass.message);
+
+    return {
+        result_array: pass.result_array,
+        before: first.before,
+        after: pass.after,
+        info: info.join("\n")
+    };
+}
+
+// One recovery pass. Each block ends "nothing" (no unknown codeword), "recovered" or "open"
+function srRecoverPass(data_array, limits) {
 
     var width = data_array.length;
     var version = (width - 21) / 4 + 1;
@@ -756,9 +812,11 @@ function smartRecovery(data_array, limits) {
     var data = maskData(data_array, mask_pattern);
     var rs_blocks = readRSBlocks(data, version, ecc);
     var nysm = error_correction_code_table[version - 1][ecc];
-    var info = [];
+    var header = [];
+    var lines = [];
+    var status = [];
 
-    info.push("Version " + version + "-" + ["M", "L", "H", "Q"][ecc] + ": " + rs_blocks.length + " block(s), "
+    header.push("Version " + version + "-" + ["M", "L", "H", "Q"][ecc] + ": " + rs_blocks.length + " block(s), "
         + nysm + " error correction codewords per block");
 
     // Data sequence, and the data codewords with unknown bits
@@ -775,11 +833,11 @@ function smartRecovery(data_array, limits) {
 
     var grammar = srGrammarCandidates(data_bits, version, targets, limits);
     if (grammar.masks)
-        info.push("Grammar: " + grammar.live + " possible segment(s) and message end(s) agree with the known bits");
+        header.push("Grammar: " + grammar.live + " possible segment(s) and message end(s) agree with the known bits");
     else if (grammar.truncated)
-        info.push("Grammar: too many possibilities to analyze, not used");
+        header.push("Grammar: too many possibilities to analyze, not used");
     else
-        info.push("Grammar: no parse of the data sequence matches the known bits, not used");
+        header.push("Grammar: no parse of the data sequence matches the known bits, not used");
 
     var solutions = [];
     g = 0;
@@ -806,7 +864,8 @@ function smartRecovery(data_array, limits) {
         var line = "Block " + (b + 1) + ": " + unknown + " unknown codeword(s)";
         if (unknown == 0) {
             solutions.push([by_bits.map(function (values) { return values[0]; })]);
-            info.push(line + ", nothing to recover");
+            lines.push(line + ", nothing to recover");
+            status.push("nothing");
             continue;
         }
 
@@ -837,19 +896,23 @@ function smartRecovery(data_array, limits) {
 
         // Only rank complete solution lists: a missing solution could be the right one
         var complete = res.count == res.solutions.length;
+        // A lower bound: in tests, revealing twice as many random unknown modules always solved the block
+        var at_least = srModulesNeeded(by_grammar, nysm, limits);
+        var needed = "identify " + at_least + " to " + 2 * at_least + " more module(s) of this block and run it again";
         if (res.status == "solved")
             line += ", solved";
         else if (res.status == "ambiguous" && complete)
             line += ", " + res.count + " possible solutions";
         else if (res.status == "ambiguous")
-            line += ", " + res.count + " possible solutions, too many to rank: block left unchanged, more modules are needed";
+            line += ", " + res.count + " possible solutions, too many to rank: block left unchanged, " + needed;
         else if (res.status == "too_large")
-            line += ", search too large (" + res.total + " combinations): block left unchanged, more modules are needed";
+            line += ", search too large (" + res.total + " combinations): block left unchanged, " + needed;
         else
             line += ", no solution: some known modules are probably wrong";
-        info.push(line);
+        lines.push(line);
 
         solutions.push(res.solutions.length && complete ? res.solutions : null);
+        status.push(solutions[b] ? "recovered" : "open");
     }
 
     // Pick a solution per block, preferring the most readable message
@@ -871,8 +934,9 @@ function smartRecovery(data_array, limits) {
         if (!solutions[b] || solutions[b].length < 2)
             continue;
         if (unsolved) {
-            info.push("Block " + (b + 1) + ": can't pick one of its solutions while other blocks are unknown, block left unchanged");
+            lines[b] += ": can't pick one while other blocks are unknown, block left unchanged";
             solutions[b] = null;
+            status[b] = "open";
             continue;
         }
         var best_score = -Infinity;
@@ -893,16 +957,17 @@ function smartRecovery(data_array, limits) {
         choice[b] = best;
         if (ties > 1) {
             solutions[b] = null;
-            info.push("Block " + (b + 1) + ": " + ties + " solutions are equally plausible, block left unchanged");
+            status[b] = "open";
+            lines[b] += ": " + ties + " are equally plausible, block left unchanged";
         } else {
-            info.push("Block " + (b + 1) + ": picked the solution with the most readable text");
+            lines[b] += ": picked the one with the most readable text";
         }
     }
 
     var final_bits = assemble();
     var message = srReadMessage(final_bits, version);
     if (message)
-        info.push((final_bits.indexOf("?") == -1 ? "Message: " : "Message (partial): ") + message.text);
+        message = (final_bits.indexOf("?") == -1 ? "Message: " : "Message (partial): ") + message.text;
 
     // Write the recovered codewords back into the modules
     var before = "";
@@ -928,6 +993,9 @@ function smartRecovery(data_array, limits) {
         result_array: maskData(data, mask_pattern),
         before: before,
         after: after,
-        info: info.join("\n")
+        header: header,
+        lines: lines,
+        status: status,
+        message: message
     };
 }

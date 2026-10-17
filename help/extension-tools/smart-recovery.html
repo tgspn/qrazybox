@@ -65,7 +65,9 @@
 			<li><p><b>solved</b> : the block has exactly one possible solution.</p></li>
 			<li><p><b>N fixed by the grammar</b> : N unknown codewords got a single possible value from the structure of the data sequence.</p></li>
 			<li><p><b>N possible solutions</b> : the block has more than one solution. When every other block is known, the tool picks the solution whose message is the most readable, and says so. When the solutions are equally readable, or other blocks are still unknown, the block is left unchanged.</p></li>
-			<li><p><b>search too large</b> : there are too many combinations to try. The block is left unchanged. Recover more modules by hand and run the tool again.</p></li>
+			<li><p><b>search too large</b> : there are too many combinations to try, and the block is left unchanged.</p></li>
+			<li><p><b>identify N to 2N more module(s)</b> : the known modules don't hold enough information to solve the block. Each module you identify by hand adds about one bit. N is the minimum. In practice, identifying 2N of the block's grey modules has been enough.</p></li>
+			<li><p><b>round N</b> : recovered codewords can narrow down the other blocks, for example once the end of the message is known, the padding of other blocks is too. The tool repeats the analysis while it recovers more, and this marks the blocks solved in a later round.</p></li>
 			<li><p><b>no solution</b> : nothing agrees with the known modules, so some of them are probably wrong. Check the modules you drew, or mark the doubtful ones as grey.</p></li>
 			<li><p><b>corrected as errors and erasures</b> : the known modules disagreed with each other, and the block was corrected with the regular Reed-Solomon decoding, which also fixes wrong modules. Recovered modules may overwrite modules you drew, and a warning tells how many.</p></li>
 			<li><p><b>grammar ignored</b> : the block was solved without the structure of the data sequence, which happens when the QR code doesn't follow the usual encoding rules.</p></li>

@@ -880,6 +880,17 @@ function rawImportLuminance(x, y) {
     return raw_import.invert ? 255 - lum : lum;
 }
 
+// Colorfulness of a pixel (0 for grey/black/white, up to 255 for a pure color).
+// Colored pixels aren't black or white, so they mark modules as unknown.
+function rawImportSaturation(x, y) {
+    var p = raw_import.pixels;
+    x = Math.min(p.width - 1, Math.max(0, Math.floor(x)));
+    y = Math.min(p.height - 1, Math.max(0, Math.floor(y)));
+    var k = (y * p.width + x) * 4;
+    var r = p.data[k], g = p.data[k + 1], b = p.data[k + 2];
+    return Math.max(r, g, b) - Math.min(r, g, b);
+}
+
 // Perspective transform from unit square (u = column, v = row) to the quad TL, TR, BR, BL
 function rawImportTransform(c) {
     var x0 = c[0][0], y0 = c[0][1], x1 = c[1][0], y1 = c[1][1];
@@ -977,6 +988,8 @@ function sampleRawImport(version) {
     var dark = parseInt($("#raw-import-dark").val());
     var light = parseInt($("#raw-import-light").val());
     var area = parseInt($("#raw-import-area").val()) / 100;
+    // Saturation at or above this marks the module unknown; 256 disables it
+    var saturation = parseInt($("#raw-import-saturation").val());
     var steps = 3;
     var result = [];
 
@@ -984,16 +997,20 @@ function sampleRawImport(version) {
         result[i] = [];
         for (var j = 0; j < size; j++) {
             var sum = 0;
+            var sat = 0;
             for (var a = 0; a < steps; a++) {
                 for (var b = 0; b < steps; b++) {
                     var u = (j + 0.5 + ((b + 0.5) / steps - 0.5) * area) / size;
                     var v = (i + 0.5 + ((a + 0.5) / steps - 0.5) * area) / size;
                     var pt = map(u, v);
                     sum += rawImportLuminance(pt[0], pt[1]);
+                    sat += rawImportSaturation(pt[0], pt[1]);
                 }
             }
             var lum = sum / (steps * steps);
-            if (lum < dark)
+            if (sat / (steps * steps) >= saturation)
+                result[i][j] = -1;
+            else if (lum < dark)
                 result[i][j] = 1;
             else if (lum > light)
                 result[i][j] = 0;
@@ -2073,7 +2090,7 @@ $(document).ready(function () {
         drawRawImport();
     })
 
-    $("#raw-import-dark, #raw-import-light, #raw-import-area").on("input change", function () {
+    $("#raw-import-dark, #raw-import-light, #raw-import-area, #raw-import-saturation").on("input change", function () {
         var dark = parseInt($("#raw-import-dark").val());
         var light = parseInt($("#raw-import-light").val());
         if (dark > light) {
@@ -2085,6 +2102,8 @@ $(document).ready(function () {
         $("#raw-import-dark-val").text($("#raw-import-dark").val());
         $("#raw-import-light-val").text($("#raw-import-light").val());
         $("#raw-import-area-val").text($("#raw-import-area").val() + "%");
+        var saturation = parseInt($("#raw-import-saturation").val());
+        $("#raw-import-saturation-val").text(saturation > 255 ? "off" : saturation);
         requestRawImportDraw();
     })
 

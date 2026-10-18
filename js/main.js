@@ -453,7 +453,7 @@ function generateResult() {
     $("#qr-table").hide();
     $("#qr-overlay").hide();
     refreshImageOverlay();
-    $("body").css("background-color", "#FFFFFF");
+    $("body").css("background-color", "");
 }
 
 /***
@@ -464,6 +464,23 @@ function generateResult() {
 function updateToolbox() {
     $("#qr-version").val(qr_size + "x" + qr_size + " (ver. " + qr_version + ")");
     $("#qr-size").val(qr_pixel_size + "px");
+    updateStatusBar();
+}
+
+/***
+*
+*	Update the bottom status bar
+*
+***/
+function updateStatusBar() {
+    if (typeof qr_version === "undefined" || typeof qr_size === "undefined")
+        return;
+    var mode = $("#btn-switch-mode").hasClass("active") ? "Decode" :
+        (extract_info_mode ? "Extract info" : "Editor");
+    $("#status-left").text(
+        "Version " + qr_version + "  ·  " + qr_size + "×" + qr_size +
+        "  ·  module " + qr_pixel_size + "px  ·  " + mode + " mode"
+    );
 }
 
 /***
@@ -571,7 +588,7 @@ function toggleResult() {
         $(".qr-tab").show();
         refreshImageOverlay();
         $("#btn-switch-mode").removeClass("active");
-        $("body").css("background-color", "#eceff1");
+        $("body").css("background-color", "");
         $("#div-tool-result").hide();
         $("#div-tool-work, #box-history").show();
         $("#btn-switch-mode").text("Editor Mode");
@@ -581,12 +598,13 @@ function toggleResult() {
             $("#box-tools-analysis").show();
         }
     }
+    updateStatusBar();
 }
 
 /***
 *
 *	Load image from file and put to {target}
-*	
+*
 ***/
 function loadImage(input, target) {
     if (input.files && input.files[0]) {
@@ -2938,13 +2956,15 @@ $(document).ready(function () {
         $("#box-tools-extract").show();
         $("#qr-table").hide();
         $("#qr-result, #qr-overlay").hide();
+        $(".qr-box").hide();
         refreshImageOverlay();
         $("#div-extract").show();
         $(".footer .mode-indicator").hide();
-        $("body").css("background-color", "#fff");
+        $("body").css("background-color", "");
         $(this).addClass("active");
         extractInfo();
         extract_info_mode = true;
+        updateStatusBar();
     })
 
     $("#btn-extract-show-rs, #btn-extract-show-error").click(function () {
@@ -2962,6 +2982,7 @@ $(document).ready(function () {
         $(".side-box").show();
         $(".right-box").show();
         $("#box-tools-extract").hide();
+        $(".qr-box").show();
         $("#qr-table").show();
         refreshImageOverlay();
         if (analysis_mode) {
@@ -2973,7 +2994,7 @@ $(document).ready(function () {
         $("#btn-switch-mode").text("Editor Mode");
         $("#div-extract").hide();
         $(".footer .mode-indicator").show();
-        $("body").css("background-color", "#eceff1");
+        $("body").css("background-color", "");
 
         if (analysis_mode) {
             $("#box-work").hide();
@@ -2981,6 +3002,7 @@ $(document).ready(function () {
             $("#box-tools-analysis").hide();
         }
         extract_info_mode = false;
+        updateStatusBar();
     })
 
     /****************************

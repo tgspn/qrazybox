@@ -31,6 +31,9 @@ var masking_mode = false;				// Is Masking active?
 var qr_temp_array = [];					// Temporary variable to handle qr_array duplicates
 var qr_data_block = [];					// Array to store data block in "Data Analysis tool"
 
+var grid_offset = [0, 0];				// Translation of the grid in the workspace (pan)
+var image_overlay = null;				// Data URL of image shown over the editor grid (from raw image import)
+
 var is_data_module = [];				// Store data that separate between data module and fixed module (function pattern, alignment pattern, etc)
 
 var history_array = [];					// Store history information and its qr_array data
@@ -72,6 +75,8 @@ function generateTable(version) {
         element += "</tr>";
     }
     $("#qr-table").html(element);
+    setImageOverlay(null);
+    setGridOffset(0, 0);
 
     getInformation(size);
     resize(qr_pixel_size);
@@ -447,6 +452,7 @@ function generateResult() {
     $("#qr-result").show();
     $("#qr-table").hide();
     $("#qr-overlay").hide();
+    refreshImageOverlay();
     $("body").css("background-color", "#FFFFFF");
 }
 
@@ -469,6 +475,48 @@ function resize(size) {
     $("td").each(function () {
         $(this).css({ "min-width": size + "px", "min-height": size + "px", "width": size + "px", "height": size + "px" });
     })
+    refreshImageOverlay();
+}
+
+/***
+*
+*	Move the grid in the workspace
+*
+***/
+function setGridOffset(x, y) {
+    grid_offset = [x, y];
+    $(".qr-box").css("transform", (x || y) ? "translate(" + x + "px, " + y + "px)" : "");
+}
+
+/***
+*
+*	Image overlay over the editor grid
+*	
+***/
+function setImageOverlay(src) {
+    image_overlay = src;
+    if (src) {
+        $("#qr-image-overlay").attr("src", src);
+        $("#btn-image-overlay").addClass("active");
+        $("#div-image-overlay").show();
+    } else {
+        $("#qr-image-overlay").attr("src", "#");
+        $("#div-image-overlay").hide();
+    }
+    refreshImageOverlay();
+}
+
+function refreshImageOverlay() {
+    var table = $("#qr-table");
+    if (image_overlay && $("#btn-image-overlay").hasClass("active") && table.is(":visible")) {
+        $("#qr-image-overlay").css({
+            "width": table.outerWidth() + "px",
+            "height": table.outerHeight() + "px",
+            "opacity": $("#image-overlay-opacity").val() / 100
+        }).show();
+    } else {
+        $("#qr-image-overlay").hide();
+    }
 }
 
 /***
@@ -521,6 +569,7 @@ function toggleResult() {
 
         $("#qr-result").hide();
         $(".qr-tab").show();
+        refreshImageOverlay();
         $("#btn-switch-mode").removeClass("active");
         $("body").css("background-color", "#eceff1");
         $("#div-tool-result").hide();
@@ -563,6 +612,8 @@ function saveProject(projectName) {
     }
 
     var saveData = [qr_array, qr_version, qr_format_array];
+    if (image_overlay)
+        saveData.push(image_overlay);
     var dataList = JSON.parse(localStorage.getItem("dataList"));
     var timeNow = new Date();
     var timeData = timeNow.toDateString();
@@ -579,7 +630,16 @@ function saveProject(projectName) {
         var index = projectNameList.indexOf(projectName);
         dataList[index][1] = timeData;
     }
-    localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
+    try {
+        localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
+    } catch (e) {
+        if (saveData.length < 4)
+            throw e;
+        // not enough space for the image overlay, keep the QR code data
+        saveData.pop();
+        localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
+        alert("Not enough storage space for the image overlay.\nProject saved without it.");
+    }
     localStorage.setItem("dataList", JSON.stringify(dataList));
     $("#div-save").hide();
     changed_state = false;
@@ -601,6 +661,7 @@ function loadProject(name) {
     generateTable(qr_version);
     qr_array = loadedData[0];
     qr_format_array = loadedData[2];
+    setImageOverlay(loadedData[3] || null);
     brute_force_mode = false;
     $("#tools-brute-force, #tools-unmasking").removeClass("active");
     refreshTable();
@@ -747,6 +808,709 @@ function importFromImage(src, cb) {
         cb(result);
     }
     img.src = src;
+}
+
+/***
+*
+*	Import QR code from raw image without detection (manual grid sampling)
+*
+***/
+var raw_import = {
+    canvas: null,       // Source image (downscaled when too large)
+    pixels: null,       // ImageData of source image
+    corners: [],        // TL, TR, BR, BL corners of QR code (image coordinates)
+    scale: 1,           // Display pixels per image pixel
+    drag: -1,           // Index of corner being dragged
+    zoom: 1,            // View zoom (1 = whole image)
+    offset: [0, 0],     // Image coordinates of view top-left corner
+    pan: null,          // Pan in progress : [pointer x, pointer y, offset x, offset y]
+    selected: 0,        // Index of corner moved by arrow keys
+    invert: false,      // Treat light pixels as dark (inverted QR code)
+    templates: [],      // Cached generate_qr() result per version
+    pending: false      // Redraw already requested
+};
+
+function openRawImport(src) {
+    var img = new Image();
+    img.onload = function () {
+        var ratio = Math.min(1, 4096 / Math.max(img.width, img.height));
+        var width = Math.max(1, Math.round(img.width * ratio));
+        var height = Math.max(1, Math.round(img.height * ratio));
+        var canvas = document.createElement("canvas");
+        var context = canvas.getContext("2d");
+        canvas.width = width;
+        canvas.height = height;
+        // flatten transparency to white
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(img, 0, 0, width, height);
+        try {
+            raw_import.pixels = context.getImageData(0, 0, width, height);
+        } catch (e) {
+            alert(e);
+            return;
+        }
+        raw_import.canvas = canvas;
+        raw_import.invert = $("#raw-import-invert").is(":checked");
+        raw_import.scale = Math.min(740 / width, 560 / height);
+        raw_import.zoom = 1;
+        raw_import.offset = [0, 0];
+
+        var view = document.getElementById("raw-import-canvas");
+        view.width = Math.round(width * raw_import.scale);
+        view.height = Math.round(height * raw_import.scale);
+
+        $("#div-new").hide();
+        $("#div-raw-import").show();
+        resetRawImportCorners();
+        guessRawImportVersion();
+    }
+    img.onerror = function () {
+        alert("Unable to load image");
+    }
+    img.src = src;
+}
+
+function rawImportLuminance(x, y) {
+    var p = raw_import.pixels;
+    x = Math.min(p.width - 1, Math.max(0, Math.floor(x)));
+    y = Math.min(p.height - 1, Math.max(0, Math.floor(y)));
+    var k = (y * p.width + x) * 4;
+    var lum = 0.299 * p.data[k] + 0.587 * p.data[k + 1] + 0.114 * p.data[k + 2];
+    return raw_import.invert ? 255 - lum : lum;
+}
+
+// Colorfulness of a pixel (0 for grey/black/white, up to 255 for a pure color).
+// Colored pixels aren't black or white, so they mark modules as unknown.
+function rawImportSaturation(x, y) {
+    var p = raw_import.pixels;
+    x = Math.min(p.width - 1, Math.max(0, Math.floor(x)));
+    y = Math.min(p.height - 1, Math.max(0, Math.floor(y)));
+    var k = (y * p.width + x) * 4;
+    var r = p.data[k], g = p.data[k + 1], b = p.data[k + 2];
+    return Math.max(r, g, b) - Math.min(r, g, b);
+}
+
+// Perspective transform from unit square (u = column, v = row) to the quad TL, TR, BR, BL
+function rawImportTransform(c) {
+    var x0 = c[0][0], y0 = c[0][1], x1 = c[1][0], y1 = c[1][1];
+    var x2 = c[2][0], y2 = c[2][1], x3 = c[3][0], y3 = c[3][1];
+    var dx3 = x0 - x1 + x2 - x3, dy3 = y0 - y1 + y2 - y3;
+    var a, b, d, e, g = 0, h = 0;
+
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) {
+        a = x1 - x0; b = x3 - x0;
+        d = y1 - y0; e = y3 - y0;
+    } else {
+        var dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2;
+        var den = dx1 * dy2 - dx2 * dy1;
+        if (Math.abs(den) > 1e-9) {
+            g = (dx3 * dy2 - dx2 * dy3) / den;
+            h = (dx1 * dy3 - dx3 * dy1) / den;
+        }
+        a = x1 - x0 + g * x1; b = x3 - x0 + h * x3;
+        d = y1 - y0 + g * y1; e = y3 - y0 + h * y3;
+    }
+
+    return function (u, v) {
+        var w = g * u + h * v + 1;
+        return [(a * u + b * v + x0) / w, (d * u + e * v + y0) / w];
+    }
+}
+
+function getRawImportTemplate(version) {
+    if (!raw_import.templates[version])
+        raw_import.templates[version] = generate_qr(version);
+    return raw_import.templates[version];
+}
+
+// Place corners around the bounding box of dark pixels
+function resetRawImportCorners() {
+    var p = raw_import.pixels;
+    var minX = p.width, minY = p.height, maxX = -1, maxY = -1;
+
+    for (var y = 0; y < p.height; y++) {
+        for (var x = 0; x < p.width; x++) {
+            if (rawImportLuminance(x, y) < 128) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (maxX < 0) {
+        minX = 0; minY = 0;
+        maxX = p.width - 1; maxY = p.height - 1;
+    }
+
+    raw_import.corners = [[minX, minY], [maxX + 1, minY], [maxX + 1, maxY + 1], [minX, maxY + 1]];
+    drawRawImport();
+}
+
+// Pick the version whose fixed patterns (finder, timing, alignment, version info) best match the image
+function guessRawImportVersion() {
+    var map = rawImportTransform(raw_import.corners);
+    var threshold = (parseInt($("#raw-import-dark").val()) + parseInt($("#raw-import-light").val())) / 2;
+    var best = 1, bestScore = -1;
+
+    for (var version = 1; version <= maxVersion; version++) {
+        var template = getRawImportTemplate(version);
+        var size = 17 + version * 4;
+        var match = 0, total = 0;
+
+        for (var i = 0; i < size; i++) {
+            for (var j = 0; j < size; j++) {
+                if (template[i][j] != 0 && template[i][j] != 1)
+                    continue;
+                var pt = map((j + 0.5) / size, (i + 0.5) / size);
+                var bit = rawImportLuminance(pt[0], pt[1]) < threshold ? 1 : 0;
+                if (bit == template[i][j])
+                    match++;
+                total++;
+            }
+        }
+
+        if (match / total > bestScore) {
+            bestScore = match / total;
+            best = version;
+        }
+    }
+
+    $("#raw-import-version").val(best);
+    $("#raw-import-guess-info").text("Best match: ver. " + best + " (" + Math.round(bestScore * 100) + "% of fixed patterns)");
+    drawRawImport();
+}
+
+function sampleRawImport(version) {
+    var size = 17 + version * 4;
+    var map = rawImportTransform(raw_import.corners);
+    var dark = parseInt($("#raw-import-dark").val());
+    var light = parseInt($("#raw-import-light").val());
+    var area = parseInt($("#raw-import-area").val()) / 100;
+    // Saturation at or above this marks the module unknown; 256 disables it
+    var saturation = parseInt($("#raw-import-saturation").val());
+    var steps = 3;
+    var result = [];
+
+    for (var i = 0; i < size; i++) {
+        result[i] = [];
+        for (var j = 0; j < size; j++) {
+            var sum = 0;
+            var sat = 0;
+            for (var a = 0; a < steps; a++) {
+                for (var b = 0; b < steps; b++) {
+                    var u = (j + 0.5 + ((b + 0.5) / steps - 0.5) * area) / size;
+                    var v = (i + 0.5 + ((a + 0.5) / steps - 0.5) * area) / size;
+                    var pt = map(u, v);
+                    sum += rawImportLuminance(pt[0], pt[1]);
+                    sat += rawImportSaturation(pt[0], pt[1]);
+                }
+            }
+            var lum = sum / (steps * steps);
+            if (sat / (steps * steps) >= saturation)
+                result[i][j] = -1;
+            else if (lum < dark)
+                result[i][j] = 1;
+            else if (lum > light)
+                result[i][j] = 0;
+            else
+                result[i][j] = -1;
+        }
+    }
+    return result;
+}
+
+function requestRawImportDraw() {
+    if (raw_import.pending)
+        return;
+    raw_import.pending = true;
+    window.requestAnimationFrame(function () {
+        raw_import.pending = false;
+        drawRawImport();
+    });
+}
+
+function drawRawImport() {
+    var view = document.getElementById("raw-import-canvas");
+    var ctx = view.getContext("2d");
+    var s = raw_import.scale * raw_import.zoom;
+    var ox = raw_import.offset[0], oy = raw_import.offset[1];
+    var version = parseInt($("#raw-import-version").val());
+    var size = 17 + version * 4;
+    var data = sampleRawImport(version);
+    var map = rawImportTransform(raw_import.corners);
+    var toView = function (col, row) {
+        var pt = map(col / size, row / size);
+        return [(pt[0] - ox) * s, (pt[1] - oy) * s];
+    };
+    var cell = Math.hypot(raw_import.corners[1][0] - raw_import.corners[0][0], raw_import.corners[1][1] - raw_import.corners[0][1]) * s / size;
+    var count = [0, 0, 0];
+
+    ctx.imageSmoothingEnabled = s < 1;
+    ctx.clearRect(0, 0, view.width, view.height);
+    ctx.drawImage(raw_import.canvas, ox, oy, view.width / s, view.height / s, 0, 0, view.width, view.height);
+
+    if ($("#raw-import-preview").is(":checked")) {
+        for (var i = 0; i < size; i++) {
+            for (var j = 0; j < size; j++) {
+                var p0 = toView(j, i), p1 = toView(j + 1, i), p2 = toView(j + 1, i + 1), p3 = toView(j, i + 1);
+                ctx.fillStyle = data[i][j] == 1 ? "#000" : (data[i][j] == 0 ? "#fff" : "#bdbdbd");
+                ctx.beginPath();
+                ctx.moveTo(p0[0], p0[1]);
+                ctx.lineTo(p1[0], p1[1]);
+                ctx.lineTo(p2[0], p2[1]);
+                ctx.lineTo(p3[0], p3[1]);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+    } else if (cell >= 4) {
+        // grid lines
+        ctx.strokeStyle = "rgba(0, 188, 212, 0.6)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (var k = 0; k <= size; k++) {
+            var a = toView(k, 0), b = toView(k, size);
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+            a = toView(0, k);
+            b = toView(size, k);
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+        }
+        ctx.stroke();
+
+        // sampled value of each module
+        var radius = Math.max(1.5, Math.min(6, cell * 0.15));
+        for (var i = 0; i < size; i++) {
+            for (var j = 0; j < size; j++) {
+                var c = toView(j + 0.5, i + 0.5);
+                ctx.beginPath();
+                ctx.arc(c[0], c[1], radius, 0, 2 * Math.PI);
+                if (data[i][j] == 1) {
+                    ctx.fillStyle = "#000";
+                    ctx.strokeStyle = "#fff";
+                } else if (data[i][j] == 0) {
+                    ctx.fillStyle = "#fff";
+                    ctx.strokeStyle = "#000";
+                } else {
+                    ctx.fillStyle = "#f44336";
+                    ctx.strokeStyle = "#fff";
+                }
+                ctx.fill();
+                ctx.stroke();
+            }
+        }
+    }
+
+    for (var i = 0; i < size; i++)
+        for (var j = 0; j < size; j++)
+            count[data[i][j] == 1 ? 0 : (data[i][j] == 0 ? 1 : 2)]++;
+
+    // finder pattern outlines to help alignment
+    ctx.strokeStyle = "#ff9800";
+    ctx.lineWidth = 2;
+    [[0, 0], [size - 7, 0], [0, size - 7]].forEach(function (f) {
+        var p0 = toView(f[0], f[1]), p1 = toView(f[0] + 7, f[1]), p2 = toView(f[0] + 7, f[1] + 7), p3 = toView(f[0], f[1] + 7);
+        ctx.beginPath();
+        ctx.moveTo(p0[0], p0[1]);
+        ctx.lineTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+        ctx.lineTo(p3[0], p3[1]);
+        ctx.closePath();
+        ctx.stroke();
+    });
+
+    // corner handles
+    var labels = ["TL", "TR", "BR", "BL"];
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (var n = 0; n < 4; n++) {
+        var x = (raw_import.corners[n][0] - ox) * s, y = (raw_import.corners[n][1] - oy) * s;
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, 2 * Math.PI);
+        ctx.fillStyle = n == raw_import.selected ? "rgba(233, 30, 99, 0.85)" : "rgba(3, 169, 244, 0.85)";
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.fillText(labels[n], x, y);
+    }
+
+    $("#raw-import-stats").text(size + "x" + size + " modules : " + count[0] + " black, " + count[1] + " white, " + count[2] + " grey (unknown)");
+    $("#raw-import-zoom-val").text(Math.round(raw_import.zoom * 100) + "%");
+}
+
+// Keep the view inside the image
+function clampRawImportView() {
+    var view = document.getElementById("raw-import-canvas");
+    var s = raw_import.scale * raw_import.zoom;
+    var p = raw_import.pixels;
+    raw_import.offset[0] = Math.min(Math.max(0, p.width - view.width / s), Math.max(0, raw_import.offset[0]));
+    raw_import.offset[1] = Math.min(Math.max(0, p.height - view.height / s), Math.max(0, raw_import.offset[1]));
+}
+
+// Zoom keeping the image point under (viewX, viewY) in place; default is the view center
+function zoomRawImport(factor, viewX, viewY) {
+    var view = document.getElementById("raw-import-canvas");
+    if (viewX === undefined) {
+        viewX = view.width / 2;
+        viewY = view.height / 2;
+    }
+    var s = raw_import.scale * raw_import.zoom;
+    var x = raw_import.offset[0] + viewX / s, y = raw_import.offset[1] + viewY / s;
+    // up to 64 screen pixels per image pixel
+    raw_import.zoom = Math.min(Math.max(32, 64 / raw_import.scale), Math.max(1, raw_import.zoom * factor));
+    s = raw_import.scale * raw_import.zoom;
+    raw_import.offset = [x - viewX / s, y - viewY / s];
+    clampRawImportView();
+    requestRawImportDraw();
+}
+
+// Image of the QR code area with perspective removed, one square per module
+function rectifyRawImport(version) {
+    var size = 17 + version * 4;
+    var out = size * Math.max(4, Math.min(16, Math.floor(800 / size)));
+    var map = rawImportTransform(raw_import.corners);
+    var p = raw_import.pixels;
+    var canvas = document.createElement("canvas");
+    var ctx = canvas.getContext("2d");
+    canvas.width = out;
+    canvas.height = out;
+    var image = ctx.createImageData(out, out);
+
+    for (var y = 0; y < out; y++) {
+        for (var x = 0; x < out; x++) {
+            var pt = map((x + 0.5) / out, (y + 0.5) / out);
+            var sx = Math.min(p.width - 1, Math.max(0, Math.floor(pt[0])));
+            var sy = Math.min(p.height - 1, Math.max(0, Math.floor(pt[1])));
+            var k = (sy * p.width + sx) * 4, n = (y * out + x) * 4;
+            image.data[n] = p.data[k];
+            image.data[n + 1] = p.data[k + 1];
+            image.data[n + 2] = p.data[k + 2];
+            image.data[n + 3] = 255;
+        }
+    }
+    ctx.putImageData(image, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+// Pointer position in canvas pixels
+function rawImportViewPointer(e) {
+    var view = document.getElementById("raw-import-canvas");
+    var rect = view.getBoundingClientRect();
+    return [
+        (e.clientX - rect.left) * (view.width / rect.width),
+        (e.clientY - rect.top) * (view.height / rect.height)
+    ];
+}
+
+// Pointer position in image coordinates
+function rawImportPointer(e) {
+    var pt = rawImportViewPointer(e);
+    var s = raw_import.scale * raw_import.zoom;
+    return [raw_import.offset[0] + pt[0] / s, raw_import.offset[1] + pt[1] / s];
+}
+
+function nearestRawImportCorner(pt) {
+    var nearest = -1, nearestDist = 15 / (raw_import.scale * raw_import.zoom);
+    for (var n = 0; n < 4; n++) {
+        var dist = Math.hypot(raw_import.corners[n][0] - pt[0], raw_import.corners[n][1] - pt[1]);
+        if (dist <= nearestDist) {
+            nearest = n;
+            nearestDist = dist;
+        }
+    }
+    return nearest;
+}
+
+function moveRawImportCorner(index, x, y) {
+    var p = raw_import.pixels;
+    raw_import.corners[index] = [Math.min(p.width, Math.max(0, x)), Math.min(p.height, Math.max(0, y))];
+    requestRawImportDraw();
+}
+
+
+/***
+*
+*	Enhance image before decoding : crop, rotate, scale and adjust a photo
+*	(brightness, contrast, threshold, sharpen, invert) so a hard-to-read QR
+*	code can be decoded automatically or sent to Raw Image import cleaner.
+*
+***/
+var enhance = {
+    img: null,          // Source Image element
+    base: null,         // Source rotated by the current angle (full resolution)
+    display: null,      // base scaled down to fit the view (for a fast preview)
+    view: 1,            // Display pixels per base pixel
+    crop: null,         // Selected region in base coordinates : {x, y, w, h}
+    angle: 0,           // Current rotation in degrees
+    drag: null,         // Crop interaction in progress
+    pending: false,     // Redraw already requested
+    decodeTimer: null   // Pending live decode
+};
+
+var ENHANCE_MAX_W = 740;
+var ENHANCE_MAX_H = 540;
+
+function openEnhance(src, note) {
+    var img = new Image();
+    img.onload = function () {
+        enhance.img = img;
+        enhance.angle = 0;
+        enhance.crop = null;
+        enhance.drag = null;
+        $("#enhance-rotate").val(0);
+        $("#enhance-scale").val(100);
+        $("#enhance-brightness").val(0);
+        $("#enhance-contrast").val(0);
+        $("#enhance-threshold-val").val(128);
+        $("#enhance-threshold, #enhance-sharpen, #enhance-invert").prop("checked", false);
+        $("#enhance-gray, #enhance-smooth").prop("checked", true);
+        enhanceSyncLabels();
+        enhanceBuildBase();
+        $("#div-new").hide();
+        $("#div-raw-import").hide();
+        $("#div-img-enhance").show();
+        var status = $("#enhance-status");
+        if (note) {
+            status.removeClass("ok").addClass("fail").text(note);
+        } else {
+            status.removeClass("ok fail").text("");
+        }
+        enhanceDraw();
+        enhanceRequestDecode();
+    };
+    img.onerror = function () {
+        alert("Unable to load image");
+    };
+    img.src = src;
+}
+
+function enhanceSyncLabels() {
+    $("#enhance-rotate-val").text($("#enhance-rotate").val() + "°");
+    $("#enhance-scale-val").text($("#enhance-scale").val() + "%");
+    $("#enhance-brightness-val").text($("#enhance-brightness").val());
+    $("#enhance-contrast-val").text($("#enhance-contrast").val());
+    $("#enhance-threshold-num").text($("#enhance-threshold-val").val());
+}
+
+// Build the rotated source (base) and a downscaled copy for fast previewing
+function enhanceBuildBase() {
+    var img = enhance.img;
+    var angle = enhance.angle * Math.PI / 180;
+    var sin = Math.abs(Math.sin(angle)), cos = Math.abs(Math.cos(angle));
+    var bw = Math.max(1, Math.round(img.width * cos + img.height * sin));
+    var bh = Math.max(1, Math.round(img.width * sin + img.height * cos));
+
+    var base = document.createElement("canvas");
+    base.width = bw;
+    base.height = bh;
+    var bctx = base.getContext("2d");
+    bctx.fillStyle = "#fff";
+    bctx.fillRect(0, 0, bw, bh);
+    bctx.translate(bw / 2, bh / 2);
+    bctx.rotate(angle);
+    bctx.drawImage(img, -img.width / 2, -img.height / 2);
+    enhance.base = base;
+
+    // Default crop = whole image
+    enhance.crop = { x: 0, y: 0, w: bw, h: bh };
+
+    // Fit preview inside the view, allow some upscaling for small images
+    enhance.view = Math.min(ENHANCE_MAX_W / bw, ENHANCE_MAX_H / bh, 2);
+    var dw = Math.max(1, Math.round(bw * enhance.view));
+    var dh = Math.max(1, Math.round(bh * enhance.view));
+    var display = document.createElement("canvas");
+    display.width = dw;
+    display.height = dh;
+    display.getContext("2d").drawImage(base, 0, 0, dw, dh);
+    enhance.display = display;
+
+    var view = document.getElementById("enhance-canvas");
+    view.width = dw;
+    view.height = dh;
+}
+
+// Apply the pixel adjustments (except threshold when skipThreshold) in place
+function enhanceAdjust(imageData, skipThreshold) {
+    var d = imageData.data;
+    var w = imageData.width, h = imageData.height;
+    var gray = $("#enhance-gray").is(":checked");
+    var invert = $("#enhance-invert").is(":checked");
+    var sharpen = $("#enhance-sharpen").is(":checked");
+    var binarize = !skipThreshold && $("#enhance-threshold").is(":checked");
+    var threshold = parseInt($("#enhance-threshold-val").val());
+    var brightness = parseInt($("#enhance-brightness").val()) / 100 * 255;
+    var contrast = parseInt($("#enhance-contrast").val()) / 100 * 255;
+    var factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+    for (var i = 0; i < d.length; i += 4) {
+        for (var c = 0; c < 3; c++) {
+            var v = factor * (d[i + c] - 128) + 128 + brightness;
+            d[i + c] = v < 0 ? 0 : (v > 255 ? 255 : v);
+        }
+        if (gray || binarize) {
+            var lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            d[i] = d[i + 1] = d[i + 2] = lum;
+        }
+    }
+
+    if (sharpen)
+        enhanceConvolve(imageData, [0, -1, 0, -1, 5, -1, 0, -1, 0]);
+
+    if (binarize || invert) {
+        for (var k = 0; k < d.length; k += 4) {
+            for (var ch = 0; ch < 3; ch++) {
+                var val = d[k + ch];
+                if (binarize) val = val < threshold ? 0 : 255;
+                if (invert) val = 255 - val;
+                d[k + ch] = val;
+            }
+        }
+    }
+    return imageData;
+}
+
+// 3x3 convolution (used for sharpening)
+function enhanceConvolve(imageData, kernel) {
+    var d = imageData.data;
+    var w = imageData.width, h = imageData.height;
+    var src = new Uint8ClampedArray(d);
+    for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+            for (var c = 0; c < 3; c++) {
+                var sum = 0, ki = 0;
+                for (var dy = -1; dy <= 1; dy++) {
+                    for (var dx = -1; dx <= 1; dx++) {
+                        var px = Math.min(w - 1, Math.max(0, x + dx));
+                        var py = Math.min(h - 1, Math.max(0, y + dy));
+                        sum += src[(py * w + px) * 4 + c] * kernel[ki++];
+                    }
+                }
+                d[(y * w + x) * 4 + c] = sum;
+            }
+        }
+    }
+}
+
+// Full-resolution cropped, scaled and adjusted output used for decode and import
+function enhanceProcessed() {
+    var crop = enhance.crop;
+    var scale = parseInt($("#enhance-scale").val()) / 100;
+    var ow = Math.max(1, Math.round(crop.w * scale));
+    var oh = Math.max(1, Math.round(crop.h * scale));
+    // Keep the result within a sane size for decoding
+    var cap = 1400;
+    if (Math.max(ow, oh) > cap) {
+        var r = cap / Math.max(ow, oh);
+        ow = Math.max(1, Math.round(ow * r));
+        oh = Math.max(1, Math.round(oh * r));
+    }
+    var canvas = document.createElement("canvas");
+    canvas.width = ow;
+    canvas.height = oh;
+    var ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = $("#enhance-smooth").is(":checked");
+    ctx.drawImage(enhance.base, crop.x, crop.y, crop.w, crop.h, 0, 0, ow, oh);
+    var imageData = ctx.getImageData(0, 0, ow, oh);
+    enhanceAdjust(imageData, false);
+    ctx.putImageData(imageData, 0, 0);
+    return { canvas: canvas, imageData: imageData };
+}
+
+function enhanceRequestDraw() {
+    if (enhance.pending) return;
+    enhance.pending = true;
+    window.requestAnimationFrame(function () {
+        enhance.pending = false;
+        enhanceDraw();
+    });
+}
+
+function enhanceDraw() {
+    var view = document.getElementById("enhance-canvas");
+    var ctx = view.getContext("2d");
+    // Adjusted preview, rebuilt from the base each time so adjustments are not cumulative
+    var dctx = enhance.display.getContext("2d");
+    dctx.clearRect(0, 0, enhance.display.width, enhance.display.height);
+    dctx.drawImage(enhance.base, 0, 0, enhance.display.width, enhance.display.height);
+    var preview = dctx.getImageData(0, 0, enhance.display.width, enhance.display.height);
+    enhanceAdjust(preview, false);
+    ctx.putImageData(preview, 0, 0);
+
+    // Crop overlay
+    var s = enhance.view;
+    var c = enhance.crop;
+    var x = c.x * s, y = c.y * s, w = c.w * s, h = c.h * s;
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.beginPath();
+    ctx.rect(0, 0, view.width, view.height);
+    ctx.rect(x, y, w, h);
+    ctx.fill("evenodd");
+    ctx.strokeStyle = "#03a9f4";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    // corner handles
+    ctx.fillStyle = "#03a9f4";
+    [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].forEach(function (p) {
+        ctx.fillRect(p[0] - 5, p[1] - 5, 10, 10);
+    });
+    ctx.restore();
+}
+
+function enhanceRequestDecode() {
+    if (enhance.decodeTimer) clearTimeout(enhance.decodeTimer);
+    var status = $("#enhance-status");
+    status.removeClass("ok fail").text("Checking...");
+    enhance.decodeTimer = setTimeout(function () {
+        var out = enhanceProcessed();
+        var result = null;
+        try {
+            result = jsQR(out.imageData.data, out.imageData.width, out.imageData.height);
+        } catch (e) {
+            result = null;
+        }
+        if (result && result.matrix) {
+            var size = result.matrix.width;
+            var version = (size - 17) / 4;
+            status.removeClass("fail").addClass("ok")
+                .text("✓ QR detected: version " + version + " (" + size + "x" + size + ")");
+        } else {
+            status.removeClass("ok").addClass("fail")
+                .text("No QR code detected yet — adjust the crop, rotation or threshold, or send to Raw Import.");
+        }
+    }, 180);
+}
+
+// Pointer position in base coordinates
+function enhancePointer(e) {
+    var view = document.getElementById("enhance-canvas");
+    var rect = view.getBoundingClientRect();
+    var px = (e.clientX - rect.left) * (view.width / rect.width);
+    var py = (e.clientY - rect.top) * (view.height / rect.height);
+    return [px / enhance.view, py / enhance.view];
+}
+
+function enhanceClampCrop() {
+    var b = enhance.base, c = enhance.crop;
+    c.w = Math.max(4, Math.min(b.width, c.w));
+    c.h = Math.max(4, Math.min(b.height, c.h));
+    c.x = Math.min(Math.max(0, c.x), b.width - c.w);
+    c.y = Math.min(Math.max(0, c.y), b.height - c.h);
+}
+
+// Which crop corner (if any) is near the pointer, in base coordinates
+function enhanceNearCorner(pt) {
+    var c = enhance.crop;
+    var tol = 10 / enhance.view;
+    var corners = [[c.x, c.y], [c.x + c.w, c.y], [c.x + c.w, c.y + c.h], [c.x, c.y + c.h]];
+    for (var i = 0; i < 4; i++) {
+        if (Math.abs(pt[0] - corners[i][0]) <= tol && Math.abs(pt[1] - corners[i][1]) <= tol)
+            return i;
+    }
+    return -1;
 }
 
 
@@ -1030,8 +1794,13 @@ function patchingRecovery(result) {
     var warning = 0;
 
     $("#qr-dummy").html("");
-    $("#div-patch-rec-warning, #div-patch-rec-error").hide();
+    $("#div-patch-rec-warning, #div-patch-rec-error, #div-patch-rec-info").hide();
     $("#div-patch-rec-data, #btn-patch-rec-apply").show()
+
+    if (result.info) {
+        $("#div-patch-rec-info").show();
+        $("#div-patch-rec-info textarea").val(result.info);
+    }
 
     if (typeof result == "string") {
         $("#div-patch-rec-error").show();
@@ -1096,12 +1865,18 @@ function reedSolomonDecode(data, nysm) {
     //console.log('nysm: '+nysm, 'data: '+data);
 
     for (var i = 0; i < data.length; i++) {
+        // "?" marks an unknown codeword (erasure); every other value is a known byte, 0 included
+        var msg = [];
         var err_pos = [];
         for (var j = 0; j < data[i].length; j++) {
-            if (data[i][j] == 0)
+            if (data[i][j] == "?") {
                 err_pos.push(j);
+                msg.push(0);
+            } else {
+                msg.push(parseInt(data[i][j]));
+            }
         }
-        var decoded = RS.decode(data[i], nysm, err_pos);
+        var decoded = RS.decode(msg, nysm, err_pos);
 
         if (typeof decoded == "string") {
             $("#rs-decoder-error").text("ERROR: " + decoded).removeClass("invisible");
@@ -1191,19 +1966,10 @@ function generateDataBlocks() {
 
     qr_data_block = [];
 
-    var format_info = getFormatInfo(qr_array);
-    var mask_pattern = format_info.mask;
-    var ecc_level = format_info.ecc;
-
-    if (RS_block_num_table[qr_version - 1][ecc_level] > 1) {
-        alert('Interleaved blocks is not supported yet!');
-        return;
-    }
-
-    var unmasked_data_array = maskData(qr_array, mask_pattern);
-
+    // Codewords come deinterleaved: data of every RS block in sequence, then the error correction
     var decoded_data = readDataBlock(qr_array);
     var data_block = decoded_data.blocks;
+    var rs_blocks = decoded_data.rs_blocks;
     module_order = decoded_data.module_order;
 
     while (data_block.length != 1) {
@@ -1229,13 +1995,14 @@ function generateDataBlocks() {
 
         if (enc_mode == "Numeric mode") {
 
-            var data_length = parseInt(data_block.substring(0, 10), 2);
+            var count_bits = getCharCountBits("0001", qr_version);
+            var data_length = parseInt(data_block.substring(0, count_bits), 2);
             pushBlock(
                 "Char. count indicator",
-                data_block.substring(0, 10),
+                data_block.substring(0, count_bits),
                 data_length
             );
-            data_block = data_block.substring(10);
+            data_block = data_block.substring(count_bits);
 
             for (var k = 0; k < Math.floor((data_length + 2) / 3); k++) {
 
@@ -1271,13 +2038,14 @@ function generateDataBlocks() {
 
         } else if (enc_mode == "Alphanumeric mode") {
 
-            var data_length = parseInt(data_block.substring(0, 9), 2);
+            var count_bits = getCharCountBits("0010", qr_version);
+            var data_length = parseInt(data_block.substring(0, count_bits), 2);
             pushBlock(
                 "Char. count indicator",
-                data_block.substring(0, 9),
+                data_block.substring(0, count_bits),
                 data_length
             );
-            data_block = data_block.substring(9);
+            data_block = data_block.substring(count_bits);
 
             for (var i = 0; i < Math.floor((data_length + 1) / 2); i++) {
 
@@ -1309,13 +2077,14 @@ function generateDataBlocks() {
 
         } else if (enc_mode == "Binary mode") {
 
-            var data_length = parseInt(data_block.substring(0, 8), 2);
+            var count_bits = getCharCountBits("0100", qr_version);
+            var data_length = parseInt(data_block.substring(0, count_bits), 2);
             pushBlock(
                 "Char. count indicator",
-                data_block.substring(0, 8),
+                data_block.substring(0, count_bits),
                 data_length
             );
-            data_block = data_block.substring(8);
+            data_block = data_block.substring(count_bits);
 
             for (var i = 0; i < data_length; i++) {
                 temp_value = data_block.substring(0, 8);
@@ -1329,34 +2098,38 @@ function generateDataBlocks() {
                 );
             }
 
-        } else if (enc_mode == "Terminator") {
-
-
         } else {
+            // Terminator: everything left in the data codewords is padding
             break;
         }
     }
 
-    //console.log(data_block);
+    var ec_bits = 0;
+    for (var i = 0; i < rs_blocks.length; i++)
+        ec_bits += rs_blocks[i].ec.length * 8;
 
-
-    var error_correction_level = getFormatInfo(qr_array).ecc;
-    var offset = data_block.length - error_correction_code_table[qr_version - 1][error_correction_level] * 8;
-
-    pushBlock(
-        "Padding bits",
-        data_block.substring(0, offset),
-        ""
-    );
-    data_block = data_block.substring(offset);
-
-    while (data_block.length >= 8) {
+    var offset = data_block.length - ec_bits;
+    if (offset > 0) {
         pushBlock(
-            "Error correction",
-            data_block.substring(0, 8),
-            parseInt(data_block.substring(0, 8), 2)
+            "Padding bits",
+            data_block.substring(0, offset),
+            ""
         );
-        data_block = data_block.substring(8);
+        data_block = data_block.substring(offset);
+    }
+
+    // Skip labeling when the message overran the data codewords
+    if (data_block.length == ec_bits) {
+        for (var i = 0; i < rs_blocks.length; i++) {
+            for (var j = 0; j < rs_blocks[i].ec.length; j++) {
+                var bits = rs_blocks[i].ec[j].bits;
+                pushBlock(
+                    rs_blocks.length > 1 ? "Error correction (block " + (i + 1) + ")" : "Error correction",
+                    bits,
+                    parseInt(bits, 2)
+                );
+            }
+        }
     }
 
     console.log(qr_data_block);
@@ -1520,7 +2293,8 @@ $(document).ready(function () {
 
             reader.onload = function (e) {
                 $("#hidden-img").attr("src", e.target.result);
-                importFromImage($("#hidden-img").attr("src"), function (data) {
+                var src = $("#hidden-img").attr("src");
+                importFromImage(src, function (data) {
                     if (Array.isArray(data)) {
                         $("#div-new").hide();
                         generateTable(qr_version);
@@ -1530,7 +2304,8 @@ $(document).ready(function () {
                         refreshTable();
                         changed_state = true;
                     } else {
-                        alert(data);
+                        // Direct decode failed : open the enhance tool so the image can be cleaned up
+                        openEnhance(src, "Could not decode this image directly. Clean it up here and try again.");
                     }
                 })
             }
@@ -1567,6 +2342,363 @@ $(document).ready(function () {
             reader.readAsText(this.files[0]);
         }
     })
+
+    $("#new-btn-import-raw").click(function () {
+        $("#import-raw").click();
+        return false;
+    })
+
+    $("#import-raw").change(function () {
+        if (this.files && this.files[0]) {
+            var reader = new FileReader();
+
+            reader.onload = function (e) {
+                openRawImport(e.target.result);
+            }
+            reader.readAsDataURL(this.files[0]);
+        }
+        // allow selecting the same file again
+        $(this).val("");
+    })
+
+    for (var v = 1; v <= maxVersion; v++) {
+        var vs = 17 + v * 4;
+        $("#raw-import-version").append("<option value='" + v + "'>ver. " + v + " (" + vs + "x" + vs + ")</option>");
+    }
+
+    $("#raw-import-version, #raw-import-preview").change(function () {
+        drawRawImport();
+    })
+
+    $("#raw-import-invert").change(function () {
+        raw_import.invert = $(this).is(":checked");
+        drawRawImport();
+    })
+
+    $("#raw-import-dark, #raw-import-light, #raw-import-area, #raw-import-saturation").on("input change", function () {
+        var dark = parseInt($("#raw-import-dark").val());
+        var light = parseInt($("#raw-import-light").val());
+        if (dark > light) {
+            if (this.id == "raw-import-dark")
+                $("#raw-import-light").val(dark);
+            else
+                $("#raw-import-dark").val(light);
+        }
+        $("#raw-import-dark-val").text($("#raw-import-dark").val());
+        $("#raw-import-light-val").text($("#raw-import-light").val());
+        $("#raw-import-area-val").text($("#raw-import-area").val() + "%");
+        var saturation = parseInt($("#raw-import-saturation").val());
+        $("#raw-import-saturation-val").text(saturation > 255 ? "off" : saturation);
+        requestRawImportDraw();
+    })
+
+    $("#btn-raw-import-guess").click(function () {
+        guessRawImportVersion();
+    })
+
+    $("#btn-raw-import-reset").click(function () {
+        resetRawImportCorners();
+    })
+
+    $("#btn-raw-import-cancel").click(function () {
+        $("#div-raw-import").hide();
+        $("#div-new").show();
+    })
+
+    $("#btn-raw-import-apply").click(function () {
+        var version = parseInt($("#raw-import-version").val());
+        var data = sampleRawImport(version);
+
+        $("#div-raw-import").hide();
+        qr_version = version;
+        qr_size = 17 + version * 4;
+        generateTable(qr_version);
+        qr_format_array = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        if ($("#btn-switch-mode").hasClass("active")) {
+            toggleResult();
+        }
+        if ($("#div-extract").css("display") != "none") {
+            $("#btn-tools-extract").trigger("click");
+        }
+        brute_force_mode = false;
+        extract_info_mode = false;
+        if (analysis_mode) {
+            $("#tools-data-analysis").trigger("click");
+        }
+        $("#tools-brute-force, #tools-unmasking").removeClass("active");
+        $("#qr-overlay").html("");
+        $("#box-tools-masking").hide();
+        updateQRArray(data);
+        clearHistory();
+        updateHistory("Load from raw image");
+        refreshTable();
+        setImageOverlay(rectifyRawImport(version));
+        changed_state = true;
+    })
+
+    var raw_import_view = document.getElementById("raw-import-canvas");
+
+    raw_import_view.addEventListener("pointerdown", function (e) {
+        // Ctrl + drag always moves the view, even over a corner handle
+        var corner = (e.ctrlKey || e.metaKey) ? -1 : nearestRawImportCorner(rawImportPointer(e));
+        if (corner >= 0) {
+            raw_import.drag = corner;
+            raw_import.selected = corner;
+            // keep arrow keys for the corner instead of a focused control
+            if (document.activeElement)
+                document.activeElement.blur();
+            raw_import_view.setPointerCapture(e.pointerId);
+            requestRawImportDraw();
+            e.preventDefault();
+        } else if (raw_import.zoom > 1) {
+            // drag empty area to pan
+            var vp = rawImportViewPointer(e);
+            raw_import.pan = [vp[0], vp[1], raw_import.offset[0], raw_import.offset[1]];
+            raw_import_view.setPointerCapture(e.pointerId);
+            raw_import_view.style.cursor = "grabbing";
+            e.preventDefault();
+        }
+    })
+
+    raw_import_view.addEventListener("pointermove", function (e) {
+        var pt = rawImportPointer(e);
+        if (raw_import.drag >= 0) {
+            moveRawImportCorner(raw_import.drag, pt[0], pt[1]);
+        } else if (raw_import.pan) {
+            var vp = rawImportViewPointer(e);
+            var s = raw_import.scale * raw_import.zoom;
+            raw_import.offset = [raw_import.pan[2] - (vp[0] - raw_import.pan[0]) / s, raw_import.pan[3] - (vp[1] - raw_import.pan[1]) / s];
+            clampRawImportView();
+            requestRawImportDraw();
+        } else if (nearestRawImportCorner(pt) >= 0) {
+            raw_import_view.style.cursor = "move";
+        } else {
+            raw_import_view.style.cursor = raw_import.zoom > 1 ? "grab" : "crosshair";
+        }
+    })
+
+    raw_import_view.addEventListener("pointerup", function () {
+        raw_import.drag = -1;
+        raw_import.pan = null;
+    })
+
+    raw_import_view.addEventListener("pointercancel", function () {
+        raw_import.drag = -1;
+        raw_import.pan = null;
+    })
+
+    raw_import_view.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        var vp = rawImportViewPointer(e);
+        zoomRawImport(e.deltaY < 0 ? 1.25 : 0.8, vp[0], vp[1]);
+    }, { passive: false })
+
+    $("#btn-raw-import-zoom-in").click(function () {
+        zoomRawImport(1.5);
+    })
+
+    $("#btn-raw-import-zoom-out").click(function () {
+        zoomRawImport(1 / 1.5);
+    })
+
+    $("#btn-raw-import-zoom-fit").click(function () {
+        raw_import.zoom = 1;
+        raw_import.offset = [0, 0];
+        requestRawImportDraw();
+    })
+
+    /* ---------- Enhance & Decode Image ---------- */
+
+    $("#new-btn-import-enhance").click(function () {
+        $("#import-enhance").click();
+        return false;
+    })
+
+    $("#import-enhance").change(function () {
+        if (this.files && this.files[0]) {
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                openEnhance(e.target.result);
+            }
+            reader.readAsDataURL(this.files[0]);
+        }
+        $(this).val("");
+    })
+
+    // Rotation rebuilds the base (and resets the crop)
+    $("#enhance-rotate").on("input change", function () {
+        enhance.angle = parseInt($(this).val());
+        enhanceSyncLabels();
+        enhanceBuildBase();
+        enhanceDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#btn-enhance-rotate90").click(function () {
+        var a = ((enhance.angle + 90 + 180) % 360) - 180;
+        enhance.angle = a;
+        $("#enhance-rotate").val(a);
+        enhanceSyncLabels();
+        enhanceBuildBase();
+        enhanceDraw();
+        enhanceRequestDecode();
+    })
+
+    // Pixel adjustments only redraw and re-decode
+    $("#enhance-scale, #enhance-brightness, #enhance-contrast, #enhance-threshold-val").on("input change", function () {
+        enhanceSyncLabels();
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#enhance-threshold, #enhance-gray, #enhance-sharpen, #enhance-invert, #enhance-smooth").change(function () {
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    // Otsu automatic threshold from the current adjusted luminance
+    $("#btn-enhance-otsu").click(function () {
+        var dctx = enhance.display.getContext("2d");
+        dctx.clearRect(0, 0, enhance.display.width, enhance.display.height);
+        dctx.drawImage(enhance.base, 0, 0, enhance.display.width, enhance.display.height);
+        var data = dctx.getImageData(0, 0, enhance.display.width, enhance.display.height);
+        enhanceAdjust(data, true); // adjust but skip the threshold
+        var hist = new Array(256).fill(0);
+        var d = data.data, total = 0;
+        for (var i = 0; i < d.length; i += 4) {
+            var lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+            hist[lum]++;
+            total++;
+        }
+        var sum = 0;
+        for (var t = 0; t < 256; t++) sum += t * hist[t];
+        var sumB = 0, wB = 0, max = 0, threshold = 128;
+        for (var t2 = 0; t2 < 256; t2++) {
+            wB += hist[t2];
+            if (wB == 0) continue;
+            var wF = total - wB;
+            if (wF == 0) break;
+            sumB += t2 * hist[t2];
+            var mB = sumB / wB;
+            var mF = (sum - sumB) / wF;
+            var between = wB * wF * (mB - mF) * (mB - mF);
+            if (between > max) { max = between; threshold = t2; }
+        }
+        $("#enhance-threshold-val").val(threshold);
+        $("#enhance-threshold").prop("checked", true);
+        enhanceSyncLabels();
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#btn-enhance-reset-crop").click(function () {
+        enhance.crop = { x: 0, y: 0, w: enhance.base.width, h: enhance.base.height };
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#btn-enhance-reset").click(function () {
+        openEnhance(enhance.img.src);
+    })
+
+    $("#btn-enhance-cancel").click(function () {
+        $("#div-img-enhance").hide();
+        $("#div-new").show();
+    })
+
+    $("#btn-enhance-send-raw").click(function () {
+        var out = enhanceProcessed();
+        $("#div-img-enhance").hide();
+        openRawImport(out.canvas.toDataURL("image/png"));
+    })
+
+    $("#btn-enhance-decode").click(function () {
+        var out = enhanceProcessed();
+        importFromImage(out.canvas.toDataURL("image/png"), function (data) {
+            if (Array.isArray(data)) {
+                $("#div-img-enhance").hide();
+                generateTable(qr_version);
+                updateQRArray(data);
+                clearHistory();
+                updateHistory("Load from enhanced image");
+                refreshTable();
+                changed_state = true;
+            } else {
+                $("#enhance-status").removeClass("ok").addClass("fail")
+                    .text("Could not decode: " + data + ". Try adjusting the image or send it to Raw Import.");
+            }
+        })
+    })
+
+    var enhance_view = document.getElementById("enhance-canvas");
+
+    enhance_view.addEventListener("pointerdown", function (e) {
+        if (!enhance.base) return;
+        var pt = enhancePointer(e);
+        var corner = enhanceNearCorner(pt);
+        var c = enhance.crop;
+        if (corner >= 0) {
+            // resize from the opposite corner
+            var opp = [[c.x + c.w, c.y + c.h], [c.x, c.y + c.h], [c.x, c.y], [c.x + c.w, c.y]][corner];
+            enhance.drag = { mode: "resize", anchor: opp };
+        } else if (pt[0] >= c.x && pt[0] <= c.x + c.w && pt[1] >= c.y && pt[1] <= c.y + c.h) {
+            enhance.drag = { mode: "move", start: pt, origin: { x: c.x, y: c.y } };
+        } else {
+            enhance.drag = { mode: "resize", anchor: pt };
+            enhance.crop = { x: pt[0], y: pt[1], w: 0, h: 0 };
+        }
+        enhance_view.setPointerCapture(e.pointerId);
+        e.preventDefault();
+    })
+
+    enhance_view.addEventListener("pointermove", function (e) {
+        if (!enhance.base) return;
+        var pt = enhancePointer(e);
+        if (!enhance.drag) {
+            enhance_view.style.cursor = enhanceNearCorner(pt) >= 0 ? "nwse-resize" :
+                (pt[0] >= enhance.crop.x && pt[0] <= enhance.crop.x + enhance.crop.w &&
+                 pt[1] >= enhance.crop.y && pt[1] <= enhance.crop.y + enhance.crop.h ? "move" : "crosshair");
+            return;
+        }
+        if (enhance.drag.mode === "resize") {
+            var a = enhance.drag.anchor;
+            enhance.crop = {
+                x: Math.min(a[0], pt[0]), y: Math.min(a[1], pt[1]),
+                w: Math.abs(pt[0] - a[0]), h: Math.abs(pt[1] - a[1])
+            };
+        } else {
+            enhance.crop.x = enhance.drag.origin.x + (pt[0] - enhance.drag.start[0]);
+            enhance.crop.y = enhance.drag.origin.y + (pt[1] - enhance.drag.start[1]);
+        }
+        enhanceClampCrop();
+        enhanceRequestDraw();
+    })
+
+    function enhanceEndDrag() {
+        if (enhance.drag) {
+            enhance.drag = null;
+            enhanceClampCrop();
+            enhanceRequestDraw();
+            enhanceRequestDecode();
+        }
+    }
+    enhance_view.addEventListener("pointerup", enhanceEndDrag);
+    enhance_view.addEventListener("pointercancel", enhanceEndDrag);
+
+    // Wheel zooms the crop around the pointer
+    enhance_view.addEventListener("wheel", function (e) {
+        if (!enhance.base) return;
+        e.preventDefault();
+        var pt = enhancePointer(e);
+        var factor = e.deltaY < 0 ? 0.85 : 1 / 0.85;
+        var c = enhance.crop;
+        var nx = pt[0] - (pt[0] - c.x) * factor;
+        var ny = pt[1] - (pt[1] - c.y) * factor;
+        enhance.crop = { x: nx, y: ny, w: c.w * factor, h: c.h * factor };
+        enhanceClampCrop();
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    }, { passive: false })
 
     $("#menu-new").click(function () {
         if (changed_state) {
@@ -1685,11 +2817,18 @@ $(document).ready(function () {
         }
     })
 
+    // Largest module size, keeping the Decode mode canvas within browser limits
+    var maxModuleSize = function () {
+        return Math.max(50, Math.min(200, Math.floor(16000 / (qr_size + 8))));
+    }
+
     $("#btn-size-plus").click(function () {
-        if (qr_pixel_size != 50 && qr_pixel_size >= 10) {
-            qr_pixel_size += 5;
-        } else if (qr_pixel_size < 10) {
+        if (qr_pixel_size < 10) {
             qr_pixel_size += 1;
+        } else if (qr_pixel_size < 50) {
+            qr_pixel_size += 5;
+        } else if (qr_pixel_size + 10 <= maxModuleSize()) {
+            qr_pixel_size += 10;
         }
         $("#qr-size").val(qr_pixel_size + "px");
         resize(qr_pixel_size);
@@ -1698,7 +2837,9 @@ $(document).ready(function () {
         }
     })
     $("#btn-size-min").click(function () {
-        if (qr_pixel_size > 10) {
+        if (qr_pixel_size > 50) {
+            qr_pixel_size -= 10;
+        } else if (qr_pixel_size > 10) {
             qr_pixel_size -= 5;
         } else if (qr_pixel_size != 1) {
             qr_pixel_size -= 1;
@@ -1710,6 +2851,31 @@ $(document).ready(function () {
         }
     })
 
+    // Mouse wheel (or trackpad pinch) over the grid changes module size, keeping the module under the cursor in place
+    var zoom_wheel_delta = 0;
+    $(".qr-box")[0].addEventListener("wheel", function (e) {
+        e.preventDefault();
+
+        zoom_wheel_delta += e.deltaMode == 1 ? e.deltaY * 33 : e.deltaY;
+        if (Math.abs(zoom_wheel_delta) < 50)
+            return;
+        var zoom_in = zoom_wheel_delta < 0;
+        zoom_wheel_delta = 0;
+
+        var target = $("#qr-table").is(":visible") ? document.getElementById("qr-table") : document.getElementById("qr-result-canvas");
+        var before = target.getBoundingClientRect();
+        var fx = Math.min(1, Math.max(0, (e.clientX - before.left) / before.width));
+        var fy = Math.min(1, Math.max(0, (e.clientY - before.top) / before.height));
+
+        $(zoom_in ? "#btn-size-plus" : "#btn-size-min").trigger("click");
+
+        var after = target.getBoundingClientRect();
+        setGridOffset(
+            grid_offset[0] - (after.left + fx * after.width - (before.left + fx * before.width)),
+            grid_offset[1] - (after.top + fy * after.height - (before.top + fy * before.height))
+        );
+    }, { passive: false });
+
     $("#btn-show-grey-pixel").click(function () {
         if ($(this).hasClass("active")) {
             $(this).removeClass("active");
@@ -1719,6 +2885,15 @@ $(document).ready(function () {
             show_grey = true;
         }
         generateResult();
+    })
+
+    $("#btn-image-overlay").click(function () {
+        $(this).toggleClass("active");
+        refreshImageOverlay();
+    })
+
+    $("#image-overlay-opacity").on("input change", function () {
+        refreshImageOverlay();
     })
 
     $("#btn-qr-decode").click(function () {
@@ -1763,6 +2938,7 @@ $(document).ready(function () {
         $("#box-tools-extract").show();
         $("#qr-table").hide();
         $("#qr-result, #qr-overlay").hide();
+        refreshImageOverlay();
         $("#div-extract").show();
         $(".footer .mode-indicator").hide();
         $("body").css("background-color", "#fff");
@@ -1787,6 +2963,7 @@ $(document).ready(function () {
         $(".right-box").show();
         $("#box-tools-extract").hide();
         $("#qr-table").show();
+        refreshImageOverlay();
         if (analysis_mode) {
             $("#qr-overlay").show();
         }
@@ -1948,6 +3125,14 @@ $(document).ready(function () {
         $("#div-tools").hide();
     })
 
+    $("#tools-smart-recovery").click(function () {
+        patchingRecovery(smartRecovery(JSON.parse(JSON.stringify(qr_array))));
+        $("#div-patching-recovery-title").text("Smart Recovery");
+        $("#div-patching-recovery").show();
+
+        $("#div-tools").hide();
+    })
+
     $("#btn-patch-rec-apply").click(function () {
         qr_array = JSON.parse(JSON.stringify(qr_temp_array));
         refreshTable();
@@ -1983,7 +3168,7 @@ $(document).ready(function () {
 
         for (var i = 1; i <= nblocks; i++) {
             html += "<h5>Encoded Reed-Solomon blocks [" + i + "] : </h5>\
-                    <input type='text' class='rs-decoder-input' id='rs-decoder-input-"+ i + "' value='" + rs_block[i - 1].replace(/[^0-9,]/g, "") + "'>\
+                    <input type='text' class='rs-decoder-input' id='rs-decoder-input-"+ i + "' value='" + rs_block[i - 1].replace(/[^0-9,?]/g, "") + "'>\
                     <div class='clear'></div>";
         }
         $("#rs-decoder-page-1 div").html(html);
@@ -2000,7 +3185,7 @@ $(document).ready(function () {
         var nysm = error_correction_code_table[qr_version - 1][ecc];
         $(this).hide();
         $(".rs-decoder-input").each(function () {
-            rs_blocks.push($(this).val().replace(/[^0-9,]+/g, "").split(","));
+            rs_blocks.push($(this).val().replace(/[^0-9,?]+/g, "").split(","));
         })
 
         reedSolomonDecode(rs_blocks, nysm);
@@ -2156,9 +3341,17 @@ $(document).ready(function () {
         selectBlock(cls);
     })
 
-    $(document).on("mousedown", "#qr-table td", function () {
+    $(document).on("mousedown", "#qr-table td", function (e) {
+        var painter = active_painter;
+        // right button paints with the opposite color of the black / white painter (eraser and fill keep their behavior)
+        if (e.which == 3 && !fill_painter && (active_painter == "0" || active_painter == "1"))
+            painter = active_painter == "0" ? "1" : "0";
+        else if (e.which == 2)
+            return;
+        drag_painter = painter;
+
         if (!$(this).hasClass("static") && !$(this).hasClass("info")) {
-            if (active_painter == "0") {
+            if (painter == "0") {
                 if ($(this).hasClass("black")) {
                     $(this).removeClass("black");
                     var id = $(this)[0].id;
@@ -2189,7 +3382,7 @@ $(document).ready(function () {
 
                     changed_state = true;
                 }
-            } else if (active_painter == "1") {
+            } else if (painter == "1") {
                 if ($(this).hasClass("white")) {
                     $(this).removeClass("white");
                     var id = $(this)[0].id;
@@ -2219,7 +3412,7 @@ $(document).ready(function () {
                     }
                     changed_state = true;
                 }
-            } else if (active_painter == "2") {
+            } else if (painter == "2") {
                 if (!fill_painter) {
                     $(document).on("mousemove", startDragging);
                     $(document).on("mouseup", stopDragging);
@@ -2243,6 +3436,12 @@ $(document).ready(function () {
         }
     })
 
+    var drag_painter = active_painter;        // Painter used while dragging (inverted with right button)
+
+    $(document).on("contextmenu", "#qr-table td", function (e) {
+        e.preventDefault();
+    })
+
     var startDragging = function (e) {
         var x = e.clientX;
         var y = e.clientY;
@@ -2251,15 +3450,15 @@ $(document).ready(function () {
         if (elem.tagName == "TD" && elem.className.search("static") == -1 && elem.className.search("info") == -1) {
             var i = /\d{1,2}/.exec(id)[0];
             var j = /\d{1,2}$/.exec(id)[0];
-            if (active_painter == "0") {
+            if (drag_painter == "0") {
                 elem.className = "black";
                 qr_array[i][j] = 1;
             }
-            else if (active_painter == "1") {
+            else if (drag_painter == "1") {
                 elem.className = "white";
                 qr_array[i][j] = 0;
             }
-            else if (active_painter == "2") {
+            else if (drag_painter == "2") {
                 elem.className = "";
                 qr_array[i][j] = -1;
             }
@@ -2271,6 +3470,115 @@ $(document).ready(function () {
         $(document).off("mouseup");
         updateHistory("Painter");
     }
+
+    // Move the grid : drag the empty workspace, Ctrl + drag, drag with the middle button, or hold Space and drag.
+    // Native listeners, since stopDragging removes every jQuery mousemove / mouseup handler of document.
+    var space_down = false;
+    var grid_pan = null;
+
+    var isWorkspaceBackground = function (target) {
+        if (target == document.body || target == document.documentElement)
+            return true;
+        return $(target).closest(".main").length > 0 && $(target).closest("td, textarea, #div-extract").length == 0;
+    }
+
+    // Left button on a module waits a moment : pressing and holding still moves the grid,
+    // a quick click or an immediate drag is handed to the painter
+    var GRID_HOLD_MS = 300;
+    var pending_paint = null;
+
+    var startGridPan = function (x, y) {
+        grid_pan = [x, y, grid_offset[0], grid_offset[1]];
+        $("body").addClass("grid-panning");
+    }
+
+    var releasePendingPaint = function () {
+        var p = pending_paint;
+        clearTimeout(p.timer);
+        pending_paint = null;
+        $(p.target).trigger($.Event("mousedown", { which: 1, button: 0, clientX: p.x, clientY: p.y }));
+    }
+
+    // Capture phase listeners : they run before the painter (jQuery handlers on document)
+    window.addEventListener("mousedown", function (e) {
+        if ($(".overlay:visible").length)
+            return;
+        var background = isWorkspaceBackground(e.target);
+        if (!background && !$(e.target).closest(".qr-box").length)
+            return;
+
+        if (e.button == 1 || (e.button == 0 && (space_down || e.ctrlKey || e.metaKey || background))) {
+            e.preventDefault();
+            e.stopPropagation();
+            startGridPan(e.clientX, e.clientY);
+        } else if (e.button == 0 && $(e.target).closest("#qr-table td").length) {
+            e.preventDefault();
+            e.stopPropagation();
+            pending_paint = {
+                target: e.target,
+                x: e.clientX,
+                y: e.clientY,
+                timer: setTimeout(function () {
+                    if (pending_paint) {
+                        var p = pending_paint;
+                        pending_paint = null;
+                        startGridPan(p.x, p.y);
+                    }
+                }, GRID_HOLD_MS)
+            };
+        }
+    }, true);
+
+    window.addEventListener("mousemove", function (e) {
+        // moved before the hold delay : it is a paint drag
+        if (pending_paint && Math.hypot(e.clientX - pending_paint.x, e.clientY - pending_paint.y) > 4)
+            releasePendingPaint();
+        if (grid_pan)
+            setGridOffset(grid_pan[2] + e.clientX - grid_pan[0], grid_pan[3] + e.clientY - grid_pan[1]);
+    }, true);
+
+    window.addEventListener("mouseup", function () {
+        // released before the hold delay : it is a click
+        if (pending_paint)
+            releasePendingPaint();
+        if (grid_pan) {
+            grid_pan = null;
+            $("body").removeClass("grid-panning");
+        }
+    }, true);
+
+    window.addEventListener("dblclick", function (e) {
+        if (!$(".overlay:visible").length && isWorkspaceBackground(e.target))
+            setGridOffset(0, 0);
+    });
+
+    window.addEventListener("keydown", function (e) {
+        if ($("input, textarea, select").is(":focus") || $(".overlay:visible").length)
+            return;
+        if (e.keyCode == 32) {
+            e.preventDefault();
+            if (document.activeElement && document.activeElement.tagName == "BUTTON")
+                document.activeElement.blur();
+            space_down = true;
+            $("body").addClass("grid-pan-ready");
+        } else if (e.keyCode == 17 || e.key == "Meta") {
+            // Ctrl : only the cursor hint, Ctrl shortcuts keep working
+            $("body").addClass("grid-pan-ready");
+        }
+    });
+
+    window.addEventListener("keyup", function (e) {
+        if (e.keyCode == 32)
+            space_down = false;
+        if (!space_down && !e.ctrlKey && !e.metaKey)
+            $("body").removeClass("grid-pan-ready");
+    });
+
+    // keys released while the window was not focused
+    window.addEventListener("blur", function () {
+        space_down = false;
+        $("body").removeClass("grid-pan-ready");
+    });
 
     $(document).on("click", "#qr-format-info td", function () {
         if (!$(this).hasClass("static")) {
@@ -2427,6 +3735,18 @@ $(document).ready(function () {
     })
 
     $(document).keydown(function (e) {
+        // Raw image import : arrow keys nudge the selected corner
+        if ($("#div-raw-import").is(":visible")) {
+            var step = e.shiftKey ? 10 : 1;
+            var delta = { 37: [-step, 0], 38: [0, -step], 39: [step, 0], 40: [0, step] }[e.keyCode];
+            if (delta && !$("select, input").is(":focus")) {
+                e.preventDefault();
+                var corner = raw_import.corners[raw_import.selected];
+                moveRawImportCorner(raw_import.selected, corner[0] + delta[0], corner[1] + delta[1]);
+            }
+            return;
+        }
+
         if (!$("input[type=text], textarea").is(":focus") && !$("#tools-extract").hasClass("active")) {
 
             //Shortcut key : Tab

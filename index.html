@@ -100,6 +100,12 @@
 					<div id="btn-version-min" class="minus"><img src="img/minus.png"></div>
 					<div id="btn-version-plus" class="plus"><img src="img/plus.png"></div>
 				</div>
+				<div id="div-image-overlay" class="hide">
+					<div class="clear"></div>
+					<h5>Image Overlay :</h5>
+					<button class="toggle active" id="btn-image-overlay">Show</button>
+					<input type="range" id="image-overlay-opacity" min="10" max="90" value="50">
+				</div>
 			</div>
 			<div class="clear"></div>
 			<h5>Module Size :</h5>
@@ -192,6 +198,7 @@
 		<div class="qr-box">
 			<table id="qr-table" class="qr-tab"></table>
 			<table id="qr-overlay" class="qr-tab"></table>
+			<img id="qr-image-overlay" class="hide" src="#">
 			<div id="qr-result" class="hide">
 				<canvas id="qr-result-canvas"></canvas>
 				<p>
@@ -226,10 +233,14 @@
 				<div class="space"></div>
 				<button id="new-btn-new" class="big">New blank QR code</button>
 				<button id="new-btn-import-img" class="big">Import from Image</button>
+				<button id="new-btn-import-enhance" class="big">Enhance &amp; Decode Image</button>
 				<button id="new-btn-import-txt" class="big">Import from Text</button>
+				<button id="new-btn-import-raw" class="big">Import Raw Image</button>
 				<div class="clear"></div>
 				<input type="file" class="invisible" id="import-img">
+				<input type="file" class="invisible" id="import-enhance" accept="image/*">
 				<input type="file" class="invisible" id="import-txt">
+				<input type="file" class="invisible" id="import-raw" accept="image/*">
 				<canvas id="hidden-canvas" class="hide"></canvas>
 				<img src="#" id="hidden-img" class="hide">
 				<textarea id="hidden-txt" class="hide"></textarea>
@@ -243,6 +254,126 @@
 		</center>
 	</div>
 	<!-- END NEW OVERLAY -->
+
+	<!-- START RAW IMAGE IMPORT OVERLAY -->
+	<div class="overlay hide" id="div-raw-import">
+		<center>
+			<div class="box large">
+				<h3>Import Raw Image</h3>
+				<h6>Drag the corner handles (TL, TR, BR, BL) to the outer corners of the QR code, without the quiet zone. Mouse wheel zooms, drag an empty area to pan when zoomed in. Arrow keys nudge the last moved handle (Shift for 10px). Each module is sampled at its center: dark becomes black, light becomes white and anything in between becomes grey (unknown), so damaged areas can be reconstructed later.</h6>
+				<div class="space small"></div>
+				<div class="raw-import-view">
+					<canvas id="raw-import-canvas"></canvas>
+				</div>
+				<div class="raw-import-controls">
+					<div>
+						<label>Zoom</label>
+						<button id="btn-raw-import-zoom-out" class="small">-</button>
+						<button id="btn-raw-import-zoom-in" class="small">+</button>
+						<button id="btn-raw-import-zoom-fit" class="small">Fit</button>
+						<span id="raw-import-zoom-val">100%</span>
+					</div>
+					<div>
+						<label for="raw-import-version">Version</label>
+						<select id="raw-import-version"></select>
+						<button id="btn-raw-import-guess" class="small">Auto-detect</button>
+						<span id="raw-import-guess-info"></span>
+					</div>
+					<div>
+						<label for="raw-import-dark">Black below</label>
+						<input type="range" id="raw-import-dark" min="0" max="255" value="100">
+						<span id="raw-import-dark-val">100</span>
+					</div>
+					<div>
+						<label for="raw-import-light">White above</label>
+						<input type="range" id="raw-import-light" min="0" max="255" value="155">
+						<span id="raw-import-light-val">155</span>
+					</div>
+					<div>
+						<label for="raw-import-area">Sample area</label>
+						<input type="range" id="raw-import-area" min="10" max="90" value="50">
+						<span id="raw-import-area-val">50%</span>
+					</div>
+					<div>
+						<label for="raw-import-saturation">Colored = unknown</label>
+						<input type="range" id="raw-import-saturation" min="20" max="256" value="80">
+						<span id="raw-import-saturation-val">80</span>
+					</div>
+					<div>
+						<label><input type="checkbox" id="raw-import-invert"> Inverted colors</label>
+						<label><input type="checkbox" id="raw-import-preview"> Preview result</label>
+						<button id="btn-raw-import-reset" class="small">Reset corners</button>
+					</div>
+					<h6 id="raw-import-stats"></h6>
+				</div>
+				<div class="space small"></div>
+				<button id="btn-raw-import-apply">Import</button>
+				<button id="btn-raw-import-cancel">Cancel</button>
+			</div>
+		</center>
+	</div>
+	<!-- END RAW IMAGE IMPORT OVERLAY -->
+
+	<!-- START ENHANCE IMAGE OVERLAY -->
+	<div class="overlay hide" id="div-img-enhance">
+		<center>
+			<div class="box large">
+				<h3>Enhance &amp; Decode Image</h3>
+				<h6>Clean up a photo before decoding. Drag on the image to select (crop) only the QR code, then adjust rotation, scale, contrast and threshold until it decodes. Mouse wheel over the image also zooms the crop. When the status turns green the QR code was detected and can be imported; otherwise send the cleaned image to Raw Image import to reconstruct it by hand.</h6>
+				<div class="space small"></div>
+				<div class="raw-import-view">
+					<canvas id="enhance-canvas"></canvas>
+				</div>
+				<div class="raw-import-controls">
+					<div>
+						<label for="enhance-rotate">Rotate</label>
+						<input type="range" id="enhance-rotate" min="-180" max="180" value="0">
+						<span id="enhance-rotate-val">0&deg;</span>
+						<button id="btn-enhance-rotate90" class="small">+90&deg;</button>
+					</div>
+					<div>
+						<label for="enhance-scale">Scale</label>
+						<input type="range" id="enhance-scale" min="25" max="600" value="100">
+						<span id="enhance-scale-val">100%</span>
+					</div>
+					<div>
+						<label for="enhance-brightness">Brightness</label>
+						<input type="range" id="enhance-brightness" min="-100" max="100" value="0">
+						<span id="enhance-brightness-val">0</span>
+					</div>
+					<div>
+						<label for="enhance-contrast">Contrast</label>
+						<input type="range" id="enhance-contrast" min="-100" max="100" value="0">
+						<span id="enhance-contrast-val">0</span>
+					</div>
+					<div>
+						<label for="enhance-threshold-val">Threshold</label>
+						<input type="range" id="enhance-threshold-val" min="0" max="255" value="128">
+						<span id="enhance-threshold-num">128</span>
+						<button id="btn-enhance-otsu" class="small">Auto</button>
+						<label><input type="checkbox" id="enhance-threshold"> Binarize</label>
+					</div>
+					<div>
+						<label>Options</label>
+						<label><input type="checkbox" id="enhance-gray" checked> Grayscale</label>
+						<label><input type="checkbox" id="enhance-sharpen"> Sharpen</label>
+						<label><input type="checkbox" id="enhance-invert"> Invert</label>
+						<label><input type="checkbox" id="enhance-smooth" checked> Smooth scaling</label>
+					</div>
+					<div>
+						<button id="btn-enhance-reset-crop" class="small">Reset crop</button>
+						<button id="btn-enhance-reset" class="small">Reset all</button>
+					</div>
+					<h6 id="enhance-status"></h6>
+				</div>
+				<div class="space small"></div>
+				<button id="btn-enhance-decode" class="green-btn">Decode &amp; Import</button>
+				<button id="btn-enhance-send-raw">Send to Raw Import</button>
+				<button id="btn-enhance-cancel">Cancel</button>
+			</div>
+		</center>
+	</div>
+	<!-- END ENHANCE IMAGE OVERLAY -->
 
 	<!-- START SAVE OVERLAY -->
 	<div class="overlay hide" id="div-save">
@@ -293,6 +424,10 @@
 					<div id="tools-pad-recovery">
 						<h5>Padding Bits Recovery</h5>
 						<h6>Recover missing bits by placing terminator and padding bits</h6>
+					</div>
+					<div id="tools-smart-recovery">
+						<h5>Smart Recovery (<i>Experimental</i>)</h5>
+						<h6>Recover unknown codewords from the known bits, the data sequence structure and Reed-Solomon parity</h6>
 					</div>
 					<div id="tools-data-analysis">
 						<h5>Data Sequence Analysis (<i>Experimental</i>)</h5>
@@ -555,6 +690,10 @@
 						<h5 class="left">Warning : </h5>
 						<textarea spellcheck="false" readonly style="width:100%;"></textarea>
 					</div>
+					<div id="div-patch-rec-info" class="hide">
+						<h5 class="left">Details : </h5>
+						<textarea spellcheck="false" readonly style="width:100%;" rows="6"></textarea>
+					</div>
 					<h6><i>Note : Recovered modules are marked with green color</i></h6>
 					<div class="space"></div>
 					<button id="btn-patch-rec-apply">Apply</button>
@@ -582,6 +721,7 @@
 	<script type="text/javascript" src="js/table.js"></script>
 	<script type="text/javascript" src="js/sqrd.js"></script>
 	<script type="text/javascript" src="js/reedsolomon.js"></script>
+	<script type="text/javascript" src="js/recovery.js"></script>
 	<script type="text/javascript" src="js/qr.js"></script>
 	<script type="text/javascript" src="js/external/jsqrcode/grid.js"></script>
 	<script type="text/javascript" src="js/external/jsqrcode/version.js"></script>

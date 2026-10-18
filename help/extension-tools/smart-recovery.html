@@ -1,0 +1,95 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<link rel="stylesheet" type="text/css" href="../../css/style.css">
+	<link rel="icon" href="../../img/icon.png">
+	<title>QRazyBox - Help Page</title>
+</head>
+
+<script type="text/javascript" src="../../js/jquery.min.js"></script>
+<script type="text/javascript" src="../js/jquery.mark.min.js"></script>
+<script type="text/javascript" src="../js/script.js"></script>
+
+<body style="background:white;">
+	<div class="header noselect">
+		<div class="left">
+			<img src="../../img/icon.png" class="icon">
+			<h3>QRazyBox Help</h3>
+		</div>
+
+		<div class="right">
+			<div class="search">
+				<img src="../../img/search.png">
+				<input type="text" placeholder="Search here...">
+			</div>
+			<img src="../../img/bars.png" class="menu-bar">
+		</div>
+	</div>
+
+	<div id="left-box-help" class="left-box" style="overflow-x:auto;">
+		<div style="height:80px;"></div>
+		<div id="help-menu">
+
+		</div>
+	</div>
+
+	<div class="help">
+		<div class="breadcrumbs noselect">
+			<h6><a href="../index.html">Help</a> <span>&rsaquo;</span> <a href="index.html">Extension Tools</a> <span>&rsaquo;</span> Smart Recovery</h6>
+		</div>
+
+		<h2>Smart Recovery</h2>
+		<br>
+		<p><b>Smart Recovery</b> is a tool that recovers unknown (grey) codewords by combining everything that is known about the QR code. It is meant for QR codes that are too damaged for the <a href="reed-solomon-decoder.html"><b>Reed-Solomon Decoder</b></a> alone.<br><br>
+		With erasure correction, Reed-Solomon can recover as many unknown codewords per block as the number of ECC symbols. Smart Recovery goes beyond that limit by using three sources of information together:</p>
+		<ul>
+			<li><p><b>Known modules.</b> A codeword with only some of its modules unknown doesn't have 256 possible values. With 3 unknown modules, it has only 8.</p></li>
+			<li><p><b>The structure of the data sequence.</b> The message follows strict rules: an encoding mode indicator, a character count indicator, data that must fit its character set (numeric data uses 10-bit groups below 1000, alphanumeric data uses 11-bit groups below 2025), then the <b>terminator</b> and the alternating <b>padding bits</b> (<b>11101100</b> and <b>00010001</b>). Every way of reading the data sequence that agrees with the known modules is taken into account, and they narrow down what each unknown codeword can be. Some codewords end up with a single possible value.</p></li>
+			<li><p><b>Reed-Solomon parity.</b> The ECC symbols are equations that every codeword of a block must satisfy. When there are more unknown codewords than ECC symbols, the tool tries the possible values of a few of them and lets the equations solve the rest. A combination is only kept when every codeword solved this way lands on one of its own possible values.</p></li>
+		</ul>
+		<p>For example, a version 5 QR code with ECC level Q has 18 ECC symbols per block. If a block has 20 unknown codewords, the Reed-Solomon Decoder can't correct it. But if 2 of those codewords are inside the padding, the structure of the data sequence gives their values, which leaves 18 unknown codewords, and the block is recovered.</p>
+		<p>Smart Recovery also works with QR codes that use more than one Reed-Solomon block (interleaved blocks).</p>
+		<br>
+		<h4>Basic Usage</h4>
+		<p>Mark every module you are not sure about as grey, then click <b>Tools</b> in main menu and choose <b>Smart Recovery</b>. The dialog shows the recovered modules in green, the bits before and after recovery, and a <b>Details</b> report. Click <b>Apply</b> to write the recovered modules into the QR code.</p>
+		<center>
+			<img src="../img/smart-recovery.png">
+			<p><i>(The dialog of Smart Recovery. The green-colored modules indicating recovered modules)</i></p>
+		</center>
+		<br>
+		<h4>Reading the Details</h4>
+		<p>The report has one line per Reed-Solomon block, followed by the decoded message:</p>
+		<ul>
+			<li><p><b>solved</b> : the block has exactly one possible solution.</p></li>
+			<li><p><b>N fixed by the grammar</b> : N unknown codewords got a single possible value from the structure of the data sequence.</p></li>
+			<li><p><b>N possible solutions</b> : the block has more than one solution. When every other block is known, the tool picks the solution whose message is the most readable, and says so. When the solutions are equally readable, or other blocks are still unknown, the block is left unchanged.</p></li>
+			<li><p><b>search too large</b> : there are too many combinations to try, and the block is left unchanged.</p></li>
+			<li><p><b>identify N to 2N more module(s)</b> : the known modules don't hold enough information to solve the block. Each module you identify by hand adds about one bit. N is the minimum. In practice, identifying 2N of the block's grey modules has been enough.</p></li>
+			<li><p><b>round N</b> : recovered codewords can narrow down the other blocks, for example once the end of the message is known, the padding of other blocks is too. The tool repeats the analysis while it recovers more, and this marks the blocks solved in a later round.</p></li>
+			<li><p><b>no solution</b> : nothing agrees with the known modules, so some of them are probably wrong. Check the modules you drew, or mark the doubtful ones as grey.</p></li>
+			<li><p><b>corrected as errors and erasures</b> : the known modules disagreed with each other, and the block was corrected with the regular Reed-Solomon decoding, which also fixes wrong modules. Recovered modules may overwrite modules you drew, and a warning tells how many.</p></li>
+			<li><p><b>grammar ignored</b> : the block was solved without the structure of the data sequence, which happens when the QR code doesn't follow the usual encoding rules.</p></li>
+		</ul>
+		<p>A message labeled <b>partial</b> still has unknown parts, shown as <b>&#xFFFD;</b>.</p>
+		<br>
+		<h4>Requirements and Limitations</h4>
+		<ul>
+			<li><p>The Error Correction Level and Mask Pattern of the Format Info Pattern must be known. If they aren't, set them first, for example with <a href="brute-force-format-info-pattern.html"><b>Brute-force Format Info Pattern</b></a>.</p></li>
+			<li><p>Modules that are not grey are trusted. A wrong module makes recovery harder, so it's better to leave a doubtful module grey than to guess it.</p></li>
+			<li><p>Only codewords are recovered. Finder, alignment and timing patterns, and remainder bits are not.</p></li>
+			<li><p>Byte, Kanji and ECI data can hold any value, so the structure of the data sequence doesn't help there. Numeric and alphanumeric data, the terminator and the padding help the most.</p></li>
+			<li><p>Heavily damaged QR codes can take a few seconds to analyze.</p></li>
+		</ul>
+		<p>You can undo this operation anytime through <a href="../editor-painter/undo-redo-using-history.html"><b>History</b></a>.</p>
+		<div class="space"></div>
+		<div class="nav">
+			<button class="left" onclick="window.location='padding-bits-recovery.html';">Prev : Padding Bits Recovery</button>
+			<button class="right" onclick="window.location='../examples/index.html';">Next : Examples</button>
+		</div>
+		<div class="clear"></div>
+		<div class="space"></div>
+	</div>
+</body>
+</html>

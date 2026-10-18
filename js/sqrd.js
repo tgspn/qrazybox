@@ -329,7 +329,10 @@ function getFormatInfo(data) {
     var error_correction_level = parseInt(format_info_unmask.substring(0, 2), 2);
     var mask_pattern = parseInt(format_info_unmask.substring(2, 5), 2);
 
-    return { ecc: error_correction_level, mask: mask_pattern };
+    // Unknown bits are XORed as 0 above, so check them before unmasking
+    var known = format_info.slice(0, 5).indexOf("?") == -1;
+
+    return { ecc: error_correction_level, mask: mask_pattern, known: known };
 }
 
 function maskData(data_array, mask_pattern) {
@@ -352,262 +355,204 @@ function maskData(data_array, mask_pattern) {
     return data;
 }
 
+// Data modules in placement order (zigzag from the bottom-right corner), as [x, y] pairs
+function getModuleOrder(width, is_data_module) {
+
+    var order = [];
+    var x = width - 1;
+    var y = width - 1;
+    var tx;
+    while (x >= 0 && y >= 0) {
+        if (is_data_module[x][y])
+            order.push([x, y]);
+        if (y < 7) tx = y; else tx = y - 1;
+        if (tx % 2 == 1)
+            y -= 1;
+        else {
+            if (Math.floor(tx / 2) % 2 == 1) {
+                if (x == 0)
+                    y -= 1;
+                else {
+                    x -= 1;
+                    y += 1;
+                }
+            }
+            else {
+                if (x == width - 1) {
+                    if (Math.floor(tx / 2) == 3) y -= 1;
+                    y -= 1;
+                } else {
+                    x += 1;
+                    y += 1;
+                }
+            }
+        }
+    }
+
+    return order;
+}
+
+// Codeword count of every Reed-Solomon block (the longer blocks come last)
+function getBlockLayout(version, ecc) {
+
+    var block_num = RS_block_num_table[version - 1][ecc];
+    var data_total = data_code_num_table[version - 1][ecc];
+    var short_len = Math.floor(data_total / block_num);
+    var long_num = data_total % block_num;
+    var layout = [];
+
+    for (var i = 0; i < block_num; i++) {
+        layout.push({
+            data: short_len + (i >= block_num - long_num ? 1 : 0),
+            ec: error_correction_code_table[version - 1][ecc]
+        });
+    }
+
+    return layout;
+}
+
+// Read the codewords of an unmasked array and deinterleave them by Reed-Solomon block.
+// Every codeword is { bits: "01?...", modules: ["x-y", ...] }
+function readRSBlocks(data, version, ecc) {
+
+    var order = getModuleOrder(data.length, getDataModule(data));
+    var layout = getBlockLayout(version, ecc);
+
+    var codewords = [];
+    for (var i = 0; i + 8 <= order.length; i += 8) {
+        var codeword = { bits: "", modules: [] };
+        for (var j = i; j < i + 8; j++) {
+            var value = data[order[j][0]][order[j][1]];
+            codeword.bits += (value == -1) ? "?" : value;
+            codeword.modules.push(order[j][0] + "-" + order[j][1]);
+        }
+        codewords.push(codeword);
+    }
+
+    var rs_blocks = [];
+    for (var i = 0; i < layout.length; i++)
+        rs_blocks.push({ data: [], ec: [] });
+
+    var k = 0;
+    for (var j = 0; j < layout[layout.length - 1].data; j++) {
+        for (var i = 0; i < layout.length; i++) {
+            if (j < layout[i].data)
+                rs_blocks[i].data.push(codewords[k++]);
+        }
+    }
+    for (var j = 0; j < layout[0].ec; j++) {
+        for (var i = 0; i < layout.length; i++)
+            rs_blocks[i].ec.push(codewords[k++]);
+    }
+
+    return rs_blocks;
+}
+
+var char_count_bits_table = {
+    "0001": [10, 12, 14],
+    "0010": [9, 11, 13],
+    "0100": [8, 16, 16],
+    "1000": [8, 10, 12]
+};
+
+// Length of the character count indicator of a mode ("0001", "0010", "0100" or "1000")
+function getCharCountBits(mode, version) {
+
+    var range = version <= 9 ? 0 : (version <= 26 ? 1 : 2);
+
+    return char_count_bits_table[mode][range];
+}
+
+// Length of the data bits of a segment holding `count` characters
+function getSegmentDataBits(mode, count) {
+
+    if (mode == "0001")
+        return Math.floor(count / 3) * 10 + [0, 4, 7][count % 3];
+    if (mode == "0010")
+        return Math.floor(count / 2) * 11 + (count % 2) * 6;
+    if (mode == "0100")
+        return count * 8;
+    return count * 13;
+}
+
 function recoverPaddingBits(data_array) {
 
     var width = data_array.length;
     var version = (width - 21) / 4 + 1;
     var format_info = getFormatInfo(data_array);
-    var error_correction_level = format_info.ecc;
     var mask_pattern = format_info.mask;
-    var is_data_module = getDataModule(data_array);
     var data = maskData(data_array, mask_pattern);
-    var total_codewords = data_code_num_table[version - 1][error_correction_level] * 8;
+    var rs_blocks = readRSBlocks(data, version, format_info.ecc);
 
-    var pad_byte = ["11101100", "00010001"];
+    // Data sequence (data codewords of every block, in order) and the module behind each bit
+    var data_bits = "";
+    var modules = [];
+    for (var i = 0; i < rs_blocks.length; i++) {
+        for (var j = 0; j < rs_blocks[i].data.length; j++) {
+            data_bits += rs_blocks[i].data[j].bits;
+            modules.push.apply(modules, rs_blocks[i].data[j].modules);
+        }
+    }
 
-    var blocks = [];
-    var block = "";
-    count = 0;
-    var x = width - 1;
-    var y = width - 1;
-    while (true) {
-        if (x < 0 || y < 0)
+    // Skip the encoded segments to find where the message ends
+    var pos = 0;
+    while (pos + 4 <= data_bits.length) {
+        var encoding_mode = data_bits.substring(pos, pos + 4);
+
+        if (encoding_mode == "0000")
             break;
-        if (is_data_module[x][y]) {
-            if (data[x][y] == -1)
-                block += '?';
+
+        if (encoding_mode == "0111") {
+            var assignment = data_bits.substring(pos + 4, pos + 7);
+            if (assignment.charAt(0) == "0")
+                pos += 12;
+            else if (assignment.substring(0, 2) == "10")
+                pos += 20;
+            else if (assignment == "110")
+                pos += 28;
             else
-                block += data[x][y];
-            count += 1;
-            if (count == 8) {
-                blocks.push(block);
-                block = "";
-                count = 0;
-            }
-        }
-        if (y < 7) tx = y; else tx = y - 1;
-        if (tx % 2 == 1)
-            y -= 1;
-        else {
-            if (Math.floor(tx / 2) % 2 == 1) {
-                if (x == 0)
-                    y -= 1;
-                else {
-                    x -= 1;
-                    y += 1;
-                }
-            }
-            else {
-                if (x == width - 1) {
-                    if (Math.floor(tx / 2) == 3) y -= 1;
-                    y -= 1;
-                } else {
-                    x += 1;
-                    y += 1;
-                }
-            }
-        }
-    }
-
-    var block_num = RS_block_num_table[version - 1][error_correction_level];
-    var offset = data_code_num_table[version - 1][error_correction_level];
-    var data_blocks = "";
-
-    console.log(JSON.stringify(blocks));
-    for (var i = 0; i < block_num; i++) {
-        var t = [];
-        for (var j = 0; j < Math.floor(offset / block_num); j++) {
-            t.push(blocks[j * block_num + i]);
-        }
-        if (offset % block_num != 0) {
-            var remain = offset % block_num;
-            if ((block_num - remain) <= i) {
-                t.push(blocks[Math.floor(offset / block_num) * block_num + (i - (block_num - remain))]);
-            }
-        }
-        data_blocks += t.join("");
-    }
-
-    var data_bits = data_blocks;
-    var original_data_bits = "";
-    var first = true;
-
-    while (data_bits.length != 0) {
-        var encoding_mode = data_bits.substring(0, 4);
-
-        if (encoding_mode == "0001") {
-            var length_indicator = 10;
-            if (version > 9 && version <= 26) {
-                length_indicator = 12;
-            } else if (version > 26) {
-                length_indicator = 14;
-            }
-
-            if (data_bits.substring(4, 4 + length_indicator).search(/\?/g) != -1)
-                return "ERROR: Unknown Character Count Indicator";
-
-            var character_count = parseInt(data_bits.substring(4, 4 + length_indicator), 2);
-            if (character_count % 3 == 0) {
-                var offset = (character_count / 3) * 10;
-            } else if (character_count % 3 == 1) {
-                var offset = ((character_count - 2) / 3) * 10;
-                offset += 7;
-            } else {
-                var offset = ((character_count - 1) / 3) * 10;
-                offset += 4;
-            }
-            offset += 4 + length_indicator;
-
-        } else if (encoding_mode == "0010") {
-            var length_indicator = 9;
-            if (version > 9 && version <= 26) {
-                length_indicator = 11;
-            } else if (version > 26) {
-                length_indicator = 13;
-            }
-            if (data_bits.substring(4, 4 + length_indicator).search(/\?/g) != -1)
-                return "ERROR: Unknown Character Count Indicator";
-
-            var character_count = parseInt(data_bits.substring(4, 4 + length_indicator), 2);
-            if (character_count % 2 == 0) {
-                var offset = (character_count / 2) * 11;
-            } else {
-                var offset = ((character_count - 1) / 2) * 11;
-                offset += 6;
-            }
-            offset += 4 + length_indicator;
-
-        } else if (encoding_mode == "0100") {
-            var length_indicator = 8;
-            if (version > 9) {
-                length_indicator = 16;
-            }
-            if (data_bits.substring(4, 4 + length_indicator).search(/\?/g) != -1)
-                return "ERROR: Unknown Character Count Indicator";
-
-            var character_count = parseInt(data_bits.substring(4, 4 + length_indicator), 2);
-            var offset = character_count * 8;
-            offset += 4 + length_indicator;
-
-        } else if (encoding_mode == "1000") {
-            if (data_bits.substring(4, 12).search(/\?/g) != -1)
-                return "ERROR: Unknown Character Count Indicator";
-
-            var character_count = parseInt(data_bits.substring(4, 12), 2);
-            var offset = character_count * 13;
-            offset += 12;
-
-        } else if (encoding_mode == "0111") {
-
-            if (data_bits.substring(4, 5) == "0") {
-                offset += 12;
-            } else if (data_bits.substring(4, 6) == "10") {
-                offset += 20;
-            } else if (data_bits.substring(4, 7) == "110") {
-                offset += 28;
-            } else {
                 return "ERROR: Invalid ECI Assignment Number";
-            }
 
+        } else if (/^(0001|0010|0100|1000)$/.test(encoding_mode)) {
+            var count_bits = getCharCountBits(encoding_mode, version);
+            var count_indicator = data_bits.substring(pos + 4, pos + 4 + count_bits);
+            if (count_indicator.search(/\?/g) != -1)
+                return "ERROR: Unknown Character Count Indicator";
 
-        } else if (encoding_mode == "0000") {
-            break;
+            var character_count = parseInt(count_indicator, 2);
+            pos += 4 + count_bits + getSegmentDataBits(encoding_mode, character_count);
+
         } else {
-            if (first)
+            if (pos == 0)
                 return "ERROR: Unknown Encoding Mode";
-            else
-                break;
-        }
-        original_data_bits += data_bits.substring(0, offset);
-        data_bits = data_bits.substring(offset);
-        first = false;
-    }
-
-    var target_bits = data_bits;
-    if (target_bits == "" || target_bits.length < 8) {
-        console.log(target_bits);
-        return "ERROR: Current QR code didn't use padding bits";
-    }
-
-    var result = "";
-
-    var starting_bits = 8 - ((offset) % 8);
-    if (starting_bits < 4)
-        starting_bits = 8 + starting_bits;
-    console.log(offset, starting_bits, target_bits);
-
-    target_bits = target_bits.substring(starting_bits);
-
-    for (var i = 0; i < starting_bits; i++) {
-        result += "0";
-    }
-
-    var alternate = 0;
-    while (target_bits.length != 0) {
-        result += pad_byte[alternate];
-        alternate ^= 1;
-        target_bits = target_bits.substring(8);
-    }
-
-    blocks = (original_data_bits + result).match(/.{1,8}/g);
-    interleaved_blocks = "";
-
-    var block_num = RS_block_num_table[version - 1][error_correction_level];
-    var offset = data_code_num_table[version - 1][error_correction_level];
-
-    for (var i = 0; i < Math.floor(offset / block_num); i++) {
-        var t = [];
-        for (var j = 0; j < block_num; j++) {
-            t.push(blocks[j * Math.floor(offset / block_num) + i]);
-        }
-        interleaved_blocks += t.join("");
-    }
-    console.log(interleaved_blocks.match(/.{1,8}/g));
-    blocks = interleaved_blocks;
-
-    x = width - 1;
-    y = width - 1;
-    var index = 0;
-    var result_array = data;
-    while (true) {
-        if (x < 0 || y < 0 || blocks.charAt(index) == "")
             break;
-        if (is_data_module[x][y]) {
-            if (blocks.charAt(index) == "?")
-                result_array[x][y] = -1;
-            else
-                result_array[x][y] = parseInt(blocks.charAt(index));
-            index++;
         }
-        if (y < 7) tx = y; else tx = y - 1;
-        if (tx % 2 == 1)
-            y -= 1;
-        else {
-            if (Math.floor(tx / 2) % 2 == 1) {
-                if (x == 0)
-                    y -= 1;
-                else {
-                    x -= 1;
-                    y += 1;
-                }
-            }
-            else {
-                if (x == width - 1) {
-                    if (Math.floor(tx / 2) == 3) y -= 1;
-                    y -= 1;
-                } else {
-                    x += 1;
-                    y += 1;
-                }
-            }
-        }
+    }
+
+    if (pos > data_bits.length)
+        return "ERROR: Character Count Indicator exceeds the data capacity";
+    if (pos == data_bits.length)
+        return "ERROR: Current QR code didn't use padding bits";
+
+    // Terminator (up to 4 bits), zeros up to the byte boundary, then alternating pad bytes
+    var pad_byte = ["11101100", "00010001"];
+    var result = "";
+    var zeros = Math.min(4, data_bits.length - pos);
+    zeros += (8 - (pos + zeros) % 8) % 8;
+    for (var i = 0; i < zeros; i++)
+        result += "0";
+    for (var alternate = 0; pos + result.length < data_bits.length; alternate ^= 1)
+        result += pad_byte[alternate];
+
+    var result_array = data;
+    for (var i = 0; i < result.length; i++) {
+        var cord = modules[pos + i].split("-");
+        result_array[cord[0]][cord[1]] = parseInt(result.charAt(i));
     }
 
     result_array = maskData(result_array, mask_pattern);
 
-
-
-    return { result_array: result_array, after: result, before: data_bits };
+    return { result_array: result_array, after: result, before: data_bits.substring(pos) };
 }
 
 function QRDecode(data) {
@@ -727,13 +672,20 @@ function QRDecode(data) {
         unknown_code_nums.push(s);
     }
 
+    // Unknown codewords are shown as "?" so the RS decoder can treat them as erasures
+    var RS_blocks_display = [];
     for (var i = 0; i < block_num; i++) {
+        var display = [];
         for (var j = 0; j < RS_blocks[i].length; j++) {
-            if (RS_blocks[i][j].search(/\?/g) > -1)
+            if (RS_blocks[i][j].search(/\?/g) > -1) {
                 RS_blocks[i][j] = 0;
-            else
+                display.push("?");
+            } else {
                 RS_blocks[i][j] = parseInt(RS_blocks[i][j], 2)
+                display.push(RS_blocks[i][j]);
+            }
         }
+        RS_blocks_display.push(display);
     }
     console.log("RS Blocks : ", JSON.stringify(RS_blocks));
 
@@ -766,8 +718,7 @@ function QRDecode(data) {
     much_missing_bits = false;
     //Error correction here!!!!!!!!!!!
     for (var i = 0; i < block_num; i++) {
-        var t = Array.prototype.slice.call(RS_blocks[i]).reverse();
-        result.rs_block.push(JSON.stringify(t));
+        result.rs_block.push("[" + Array.prototype.slice.call(RS_blocks_display[i]).reverse().join(",") + "]");
         if (limit_error_correction_num < unknown_code_nums[i]) {
             much_missing_bits = true;
             continue;
@@ -1062,89 +1013,28 @@ function QRDecode(data) {
     return result;
 }
 
+// Data codewords of every block in sequence, followed by the error correction codewords of every block
 function readDataBlock(data) {
-
-    data = JSON.parse(JSON.stringify(data));
 
     var width = data.length;
     var version = (width - 21) / 4 + 1;
-    var is_data_module = getDataModule(data);
     var format_info = getFormatInfo(data);
-    var error_correction_level = format_info.ecc;
-    var mask_pattern = format_info.mask;
-    data = maskData(data, mask_pattern);
+    var rs_blocks = readRSBlocks(maskData(data, format_info.mask), version, format_info.ecc);
 
+    var bits = "";
     var module_order = [];
-
-    var blocks = [];
-    var block = "";
-    count = 0;
-    var x = width - 1;
-    var y = width - 1;
-    while (true) {
-        if (x < 0 || y < 0)
-            break;
-        if (is_data_module[x][y]) {
-            if (data[x][y] == -1)
-                block += '?';
-            else
-                block += data[x][y];
-            count += 1;
-            if (count == 8) {
-                blocks.push(block);
-                block = "";
-                count = 0;
-            }
-            module_order.push(x + "-" + y);
-        }
-        if (y < 7) tx = y; else tx = y - 1;
-        if (tx % 2 == 1)
-            y -= 1;
-        else {
-            if (Math.floor(tx / 2) % 2 == 1) {
-                if (x == 0)
-                    y -= 1;
-                else {
-                    x -= 1;
-                    y += 1;
-                }
-            }
-            else {
-                if (x == width - 1) {
-                    if (Math.floor(tx / 2) == 3) y -= 1;
-                    y -= 1;
-                } else {
-                    x += 1;
-                    y += 1;
-                }
+    var parts = ["data", "ec"];
+    for (var p = 0; p < parts.length; p++) {
+        for (var i = 0; i < rs_blocks.length; i++) {
+            var codewords = rs_blocks[i][parts[p]];
+            for (var j = 0; j < codewords.length; j++) {
+                bits += codewords[j].bits;
+                module_order.push.apply(module_order, codewords[j].modules);
             }
         }
     }
 
-    /*var RS_blocks = "";
-    var block_num = RS_block_num_table[version - 1][error_correction_level];
-    var offset = data_code_num_table[version - 1][error_correction_level];
-    
-    for(var i=0; i < block_num; i++){
-        var t = [];
-        for(var j=0; j < Math.floor(offset/block_num); j++){
-            t.push(blocks[j * block_num + i]);
-        }
-        if(offset % block_num != 0){
-            var remain = offset % block_num;
-            if((block_num - remain) <= i)
-                t.push(blocks[Math.floor(offset / block_num) * block_num + (i - (block_num - remain))])
-        }
-        for(var j=0; j < Math.floor((blocks.length - offset) / block_num); j++){
-            t.push(blocks[offset + j * block_num + i]);
-        }
-
-        RS_blocks += t.join("");
-    }
-
-    blocks = RS_blocks;*/
-
-    return { blocks: blocks.join(""), module_order: module_order };
+    return { blocks: bits, module_order: module_order, rs_blocks: rs_blocks };
 }
 
 function readDataBits(data_bits) {

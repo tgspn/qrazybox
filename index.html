@@ -133,6 +133,45 @@
 		</div>
 		<!-- END EDITOR TOOLBOX -->
 
+		<!-- START TOOLS PANEL -->
+		<div class="side-box noselect" id="box-tools-list">
+			<h5>Tools</h5>
+			<div class="tools-dock" id="list-tools">
+				<h6 class="tools-group">Analyze</h6>
+				<div class="tool-item" id="tools-extract" title="Force decode and get information about the current QR code as much as possible">
+					<span class="tool-name">Extract QR Information</span>
+					<span class="tool-desc">Force-decode and read everything possible</span>
+				</div>
+				<div class="tool-item" id="tools-data-analysis" title="Analyze data sequence of QR code">
+					<span class="tool-name">Data Sequence Analysis <i>(exp.)</i></span>
+					<span class="tool-desc">Inspect the data sequence block by block</span>
+				</div>
+				<h6 class="tools-group">Recover</h6>
+				<div class="tool-item" id="tools-rs-decoder" title="Errors and Erasures correction by decoding Reed-Solomon blocks">
+					<span class="tool-name">Reed-Solomon Decoder</span>
+					<span class="tool-desc">Correct errors and erasures via RS blocks</span>
+				</div>
+				<div class="tool-item" id="tools-pad-recovery" title="Recover missing bits by placing terminator and padding bits">
+					<span class="tool-name">Padding Bits Recovery</span>
+					<span class="tool-desc">Fill terminator and padding bits</span>
+				</div>
+				<div class="tool-item" id="tools-smart-recovery" title="Recover unknown codewords from the known bits, the data sequence structure and Reed-Solomon parity">
+					<span class="tool-name">Smart Recovery <i>(exp.)</i></span>
+					<span class="tool-desc">Infer unknown codewords from structure and parity</span>
+				</div>
+				<h6 class="tools-group">Transform</h6>
+				<div class="tool-item" id="tools-brute-force" title="Try all possibilities of Format Info Pattern when decoding">
+					<span class="tool-name">Brute-force Format Info</span>
+					<span class="tool-desc">Try every format info pattern</span>
+				</div>
+				<div class="tool-item" id="tools-masking" title="Simulate data masking (XOR) with Mask pattern">
+					<span class="tool-name">Data Masking</span>
+					<span class="tool-desc">Simulate masking (XOR) with a mask pattern</span>
+				</div>
+			</div>
+		</div>
+		<!-- END TOOLS PANEL -->
+
 		<!-- START EXTRACT QR INFO TOOLBOX -->
 		<div id="box-tools-extract" class="side-box hide">
 			<h5>Error Correction log : </h5>
@@ -400,49 +439,6 @@
 		</center>
 	</div>
 	<!-- END SAVE OVERLAY -->
-
-	<!-- START TOOLS OVERLAY -->
-	<div class="overlay hide" id="div-tools">
-		<center>
-			<div class="box">
-				<h3>Tools List</h3>
-				<div class="space"></div>
-				<div class="project-list noselect" id="list-tools">
-					<div id="tools-extract">
-						<h5>Extract QR Information</h5>
-						<h6>Force decode and get information about the current QR code as much as possible</h6>
-					</div>
-					<div id="tools-rs-decoder">
-						<h5>Reed-Solomon Decoder</h5>
-						<h6>Errors and Erasures correction by decoding Reed-Solomon blocks</h6>
-					</div>
-					<div id="tools-brute-force">
-						<h5>Brute-force Format Info Pattern</h5>
-						<h6>Try all possibilities of Format Info Pattern when decoding</h6>
-					</div>
-					<div id="tools-masking">
-						<h5>Data Masking</h5>
-						<h6>Simulate data masking (XOR) with Mask pattern</h6>
-					</div>
-					<div id="tools-pad-recovery">
-						<h5>Padding Bits Recovery</h5>
-						<h6>Recover missing bits by placing terminator and padding bits</h6>
-					</div>
-					<div id="tools-smart-recovery">
-						<h5>Smart Recovery (<i>Experimental</i>)</h5>
-						<h6>Recover unknown codewords from the known bits, the data sequence structure and Reed-Solomon parity</h6>
-					</div>
-					<div id="tools-data-analysis">
-						<h5>Data Sequence Analysis (<i>Experimental</i>)</h5>
-						<h6>Analyze data sequence of QR code</h6>
-					</div>
-				</div>
-				<div class="space"></div>
-				<button onclick="$('#div-tools').hide();">Close</button>
-			</div>
-		</center>
-	</div>
-	<!-- END TOOLS OVERLAY -->
 
 	<!-- START LOAD OVERLAY -->
 	<div class="overlay hide" id="div-load">

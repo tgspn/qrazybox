@@ -554,7 +554,7 @@ function toggleResult() {
 
         generateResult();
         $("#btn-switch-mode").addClass("active");
-        $("#div-tool-work, #box-history").hide();
+        $("#div-tool-work, #box-history, #box-tools-list").hide();
         $("#div-tool-result").show();
         $("#btn-switch-mode").text("Decode Mode");
         $("#box-tools-masking").hide();
@@ -590,7 +590,7 @@ function toggleResult() {
         $("#btn-switch-mode").removeClass("active");
         $("body").css("background-color", "");
         $("#div-tool-result").hide();
-        $("#div-tool-work, #box-history").show();
+        $("#div-tool-work, #box-history, #box-tools-list").show();
         $("#btn-switch-mode").text("Editor Mode");
 
         if (analysis_mode) {
@@ -2759,7 +2759,18 @@ $(document).ready(function () {
     })
 
     $("#menu-tools").click(function () {
-        $("#div-tools").show();
+        // Tools now live in a persistent panel in the left dock.
+        // On mobile the dock is hidden, so open it; then reveal and flash the panel.
+        if ($(".left-box").is(":hidden"))
+            $(".float-nav.left").trigger("click");
+        var panel = document.getElementById("box-tools-list");
+        if (panel) {
+            panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            $(panel).removeClass("flash");
+            // restart the flash animation
+            void panel.offsetWidth;
+            $(panel).addClass("flash");
+        }
     })
 
     $(document).on("click", "#list-load div", function (e) {

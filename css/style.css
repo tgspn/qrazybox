@@ -512,6 +512,27 @@ body.grid-panning, body.grid-panning * {
 	padding: 2px;
 }
 
+.overlay .box button.green-btn {
+	background: #4caf50;
+}
+
+.overlay .box button.green-btn:hover {
+	background: #388e3c;
+}
+
+#enhance-status {
+	font-weight: bold;
+	min-height: 18px;
+}
+
+#enhance-status.ok {
+	color: #2e7d32;
+}
+
+#enhance-status.fail {
+	color: #c62828;
+}
+
 .overlay .box button.big.yellow {
 	background-color: #ffc107;
 	color: #000;

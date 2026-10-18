@@ -233,10 +233,12 @@
 				<div class="space"></div>
 				<button id="new-btn-new" class="big">New blank QR code</button>
 				<button id="new-btn-import-img" class="big">Import from Image</button>
+				<button id="new-btn-import-enhance" class="big">Enhance &amp; Decode Image</button>
 				<button id="new-btn-import-txt" class="big">Import from Text</button>
 				<button id="new-btn-import-raw" class="big">Import Raw Image</button>
 				<div class="clear"></div>
 				<input type="file" class="invisible" id="import-img">
+				<input type="file" class="invisible" id="import-enhance" accept="image/*">
 				<input type="file" class="invisible" id="import-txt">
 				<input type="file" class="invisible" id="import-raw" accept="image/*">
 				<canvas id="hidden-canvas" class="hide"></canvas>
@@ -311,6 +313,67 @@
 		</center>
 	</div>
 	<!-- END RAW IMAGE IMPORT OVERLAY -->
+
+	<!-- START ENHANCE IMAGE OVERLAY -->
+	<div class="overlay hide" id="div-img-enhance">
+		<center>
+			<div class="box large">
+				<h3>Enhance &amp; Decode Image</h3>
+				<h6>Clean up a photo before decoding. Drag on the image to select (crop) only the QR code, then adjust rotation, scale, contrast and threshold until it decodes. Mouse wheel over the image also zooms the crop. When the status turns green the QR code was detected and can be imported; otherwise send the cleaned image to Raw Image import to reconstruct it by hand.</h6>
+				<div class="space small"></div>
+				<div class="raw-import-view">
+					<canvas id="enhance-canvas"></canvas>
+				</div>
+				<div class="raw-import-controls">
+					<div>
+						<label for="enhance-rotate">Rotate</label>
+						<input type="range" id="enhance-rotate" min="-180" max="180" value="0">
+						<span id="enhance-rotate-val">0&deg;</span>
+						<button id="btn-enhance-rotate90" class="small">+90&deg;</button>
+					</div>
+					<div>
+						<label for="enhance-scale">Scale</label>
+						<input type="range" id="enhance-scale" min="25" max="600" value="100">
+						<span id="enhance-scale-val">100%</span>
+					</div>
+					<div>
+						<label for="enhance-brightness">Brightness</label>
+						<input type="range" id="enhance-brightness" min="-100" max="100" value="0">
+						<span id="enhance-brightness-val">0</span>
+					</div>
+					<div>
+						<label for="enhance-contrast">Contrast</label>
+						<input type="range" id="enhance-contrast" min="-100" max="100" value="0">
+						<span id="enhance-contrast-val">0</span>
+					</div>
+					<div>
+						<label for="enhance-threshold-val">Threshold</label>
+						<input type="range" id="enhance-threshold-val" min="0" max="255" value="128">
+						<span id="enhance-threshold-num">128</span>
+						<button id="btn-enhance-otsu" class="small">Auto</button>
+						<label><input type="checkbox" id="enhance-threshold"> Binarize</label>
+					</div>
+					<div>
+						<label>Options</label>
+						<label><input type="checkbox" id="enhance-gray" checked> Grayscale</label>
+						<label><input type="checkbox" id="enhance-sharpen"> Sharpen</label>
+						<label><input type="checkbox" id="enhance-invert"> Invert</label>
+						<label><input type="checkbox" id="enhance-smooth" checked> Smooth scaling</label>
+					</div>
+					<div>
+						<button id="btn-enhance-reset-crop" class="small">Reset crop</button>
+						<button id="btn-enhance-reset" class="small">Reset all</button>
+					</div>
+					<h6 id="enhance-status"></h6>
+				</div>
+				<div class="space small"></div>
+				<button id="btn-enhance-decode" class="green-btn">Decode &amp; Import</button>
+				<button id="btn-enhance-send-raw">Send to Raw Import</button>
+				<button id="btn-enhance-cancel">Cancel</button>
+			</div>
+		</center>
+	</div>
+	<!-- END ENHANCE IMAGE OVERLAY -->
 
 	<!-- START SAVE OVERLAY -->
 	<div class="overlay hide" id="div-save">

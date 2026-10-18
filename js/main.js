@@ -1233,6 +1233,289 @@ function moveRawImportCorner(index, x, y) {
 
 /***
 *
+*	Enhance image before decoding : crop, rotate, scale and adjust a photo
+*	(brightness, contrast, threshold, sharpen, invert) so a hard-to-read QR
+*	code can be decoded automatically or sent to Raw Image import cleaner.
+*
+***/
+var enhance = {
+    img: null,          // Source Image element
+    base: null,         // Source rotated by the current angle (full resolution)
+    display: null,      // base scaled down to fit the view (for a fast preview)
+    view: 1,            // Display pixels per base pixel
+    crop: null,         // Selected region in base coordinates : {x, y, w, h}
+    angle: 0,           // Current rotation in degrees
+    drag: null,         // Crop interaction in progress
+    pending: false,     // Redraw already requested
+    decodeTimer: null   // Pending live decode
+};
+
+var ENHANCE_MAX_W = 740;
+var ENHANCE_MAX_H = 540;
+
+function openEnhance(src, note) {
+    var img = new Image();
+    img.onload = function () {
+        enhance.img = img;
+        enhance.angle = 0;
+        enhance.crop = null;
+        enhance.drag = null;
+        $("#enhance-rotate").val(0);
+        $("#enhance-scale").val(100);
+        $("#enhance-brightness").val(0);
+        $("#enhance-contrast").val(0);
+        $("#enhance-threshold-val").val(128);
+        $("#enhance-threshold, #enhance-sharpen, #enhance-invert").prop("checked", false);
+        $("#enhance-gray, #enhance-smooth").prop("checked", true);
+        enhanceSyncLabels();
+        enhanceBuildBase();
+        $("#div-new").hide();
+        $("#div-raw-import").hide();
+        $("#div-img-enhance").show();
+        var status = $("#enhance-status");
+        if (note) {
+            status.removeClass("ok").addClass("fail").text(note);
+        } else {
+            status.removeClass("ok fail").text("");
+        }
+        enhanceDraw();
+        enhanceRequestDecode();
+    };
+    img.onerror = function () {
+        alert("Unable to load image");
+    };
+    img.src = src;
+}
+
+function enhanceSyncLabels() {
+    $("#enhance-rotate-val").text($("#enhance-rotate").val() + "°");
+    $("#enhance-scale-val").text($("#enhance-scale").val() + "%");
+    $("#enhance-brightness-val").text($("#enhance-brightness").val());
+    $("#enhance-contrast-val").text($("#enhance-contrast").val());
+    $("#enhance-threshold-num").text($("#enhance-threshold-val").val());
+}
+
+// Build the rotated source (base) and a downscaled copy for fast previewing
+function enhanceBuildBase() {
+    var img = enhance.img;
+    var angle = enhance.angle * Math.PI / 180;
+    var sin = Math.abs(Math.sin(angle)), cos = Math.abs(Math.cos(angle));
+    var bw = Math.max(1, Math.round(img.width * cos + img.height * sin));
+    var bh = Math.max(1, Math.round(img.width * sin + img.height * cos));
+
+    var base = document.createElement("canvas");
+    base.width = bw;
+    base.height = bh;
+    var bctx = base.getContext("2d");
+    bctx.fillStyle = "#fff";
+    bctx.fillRect(0, 0, bw, bh);
+    bctx.translate(bw / 2, bh / 2);
+    bctx.rotate(angle);
+    bctx.drawImage(img, -img.width / 2, -img.height / 2);
+    enhance.base = base;
+
+    // Default crop = whole image
+    enhance.crop = { x: 0, y: 0, w: bw, h: bh };
+
+    // Fit preview inside the view, allow some upscaling for small images
+    enhance.view = Math.min(ENHANCE_MAX_W / bw, ENHANCE_MAX_H / bh, 2);
+    var dw = Math.max(1, Math.round(bw * enhance.view));
+    var dh = Math.max(1, Math.round(bh * enhance.view));
+    var display = document.createElement("canvas");
+    display.width = dw;
+    display.height = dh;
+    display.getContext("2d").drawImage(base, 0, 0, dw, dh);
+    enhance.display = display;
+
+    var view = document.getElementById("enhance-canvas");
+    view.width = dw;
+    view.height = dh;
+}
+
+// Apply the pixel adjustments (except threshold when skipThreshold) in place
+function enhanceAdjust(imageData, skipThreshold) {
+    var d = imageData.data;
+    var w = imageData.width, h = imageData.height;
+    var gray = $("#enhance-gray").is(":checked");
+    var invert = $("#enhance-invert").is(":checked");
+    var sharpen = $("#enhance-sharpen").is(":checked");
+    var binarize = !skipThreshold && $("#enhance-threshold").is(":checked");
+    var threshold = parseInt($("#enhance-threshold-val").val());
+    var brightness = parseInt($("#enhance-brightness").val()) / 100 * 255;
+    var contrast = parseInt($("#enhance-contrast").val()) / 100 * 255;
+    var factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+    for (var i = 0; i < d.length; i += 4) {
+        for (var c = 0; c < 3; c++) {
+            var v = factor * (d[i + c] - 128) + 128 + brightness;
+            d[i + c] = v < 0 ? 0 : (v > 255 ? 255 : v);
+        }
+        if (gray || binarize) {
+            var lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            d[i] = d[i + 1] = d[i + 2] = lum;
+        }
+    }
+
+    if (sharpen)
+        enhanceConvolve(imageData, [0, -1, 0, -1, 5, -1, 0, -1, 0]);
+
+    if (binarize || invert) {
+        for (var k = 0; k < d.length; k += 4) {
+            for (var ch = 0; ch < 3; ch++) {
+                var val = d[k + ch];
+                if (binarize) val = val < threshold ? 0 : 255;
+                if (invert) val = 255 - val;
+                d[k + ch] = val;
+            }
+        }
+    }
+    return imageData;
+}
+
+// 3x3 convolution (used for sharpening)
+function enhanceConvolve(imageData, kernel) {
+    var d = imageData.data;
+    var w = imageData.width, h = imageData.height;
+    var src = new Uint8ClampedArray(d);
+    for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+            for (var c = 0; c < 3; c++) {
+                var sum = 0, ki = 0;
+                for (var dy = -1; dy <= 1; dy++) {
+                    for (var dx = -1; dx <= 1; dx++) {
+                        var px = Math.min(w - 1, Math.max(0, x + dx));
+                        var py = Math.min(h - 1, Math.max(0, y + dy));
+                        sum += src[(py * w + px) * 4 + c] * kernel[ki++];
+                    }
+                }
+                d[(y * w + x) * 4 + c] = sum;
+            }
+        }
+    }
+}
+
+// Full-resolution cropped, scaled and adjusted output used for decode and import
+function enhanceProcessed() {
+    var crop = enhance.crop;
+    var scale = parseInt($("#enhance-scale").val()) / 100;
+    var ow = Math.max(1, Math.round(crop.w * scale));
+    var oh = Math.max(1, Math.round(crop.h * scale));
+    // Keep the result within a sane size for decoding
+    var cap = 1400;
+    if (Math.max(ow, oh) > cap) {
+        var r = cap / Math.max(ow, oh);
+        ow = Math.max(1, Math.round(ow * r));
+        oh = Math.max(1, Math.round(oh * r));
+    }
+    var canvas = document.createElement("canvas");
+    canvas.width = ow;
+    canvas.height = oh;
+    var ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = $("#enhance-smooth").is(":checked");
+    ctx.drawImage(enhance.base, crop.x, crop.y, crop.w, crop.h, 0, 0, ow, oh);
+    var imageData = ctx.getImageData(0, 0, ow, oh);
+    enhanceAdjust(imageData, false);
+    ctx.putImageData(imageData, 0, 0);
+    return { canvas: canvas, imageData: imageData };
+}
+
+function enhanceRequestDraw() {
+    if (enhance.pending) return;
+    enhance.pending = true;
+    window.requestAnimationFrame(function () {
+        enhance.pending = false;
+        enhanceDraw();
+    });
+}
+
+function enhanceDraw() {
+    var view = document.getElementById("enhance-canvas");
+    var ctx = view.getContext("2d");
+    // Adjusted preview, rebuilt from the base each time so adjustments are not cumulative
+    var dctx = enhance.display.getContext("2d");
+    dctx.clearRect(0, 0, enhance.display.width, enhance.display.height);
+    dctx.drawImage(enhance.base, 0, 0, enhance.display.width, enhance.display.height);
+    var preview = dctx.getImageData(0, 0, enhance.display.width, enhance.display.height);
+    enhanceAdjust(preview, false);
+    ctx.putImageData(preview, 0, 0);
+
+    // Crop overlay
+    var s = enhance.view;
+    var c = enhance.crop;
+    var x = c.x * s, y = c.y * s, w = c.w * s, h = c.h * s;
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.beginPath();
+    ctx.rect(0, 0, view.width, view.height);
+    ctx.rect(x, y, w, h);
+    ctx.fill("evenodd");
+    ctx.strokeStyle = "#03a9f4";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    // corner handles
+    ctx.fillStyle = "#03a9f4";
+    [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].forEach(function (p) {
+        ctx.fillRect(p[0] - 5, p[1] - 5, 10, 10);
+    });
+    ctx.restore();
+}
+
+function enhanceRequestDecode() {
+    if (enhance.decodeTimer) clearTimeout(enhance.decodeTimer);
+    var status = $("#enhance-status");
+    status.removeClass("ok fail").text("Checking...");
+    enhance.decodeTimer = setTimeout(function () {
+        var out = enhanceProcessed();
+        var result = null;
+        try {
+            result = jsQR(out.imageData.data, out.imageData.width, out.imageData.height);
+        } catch (e) {
+            result = null;
+        }
+        if (result && result.matrix) {
+            var size = result.matrix.width;
+            var version = (size - 17) / 4;
+            status.removeClass("fail").addClass("ok")
+                .text("✓ QR detected: version " + version + " (" + size + "x" + size + ")");
+        } else {
+            status.removeClass("ok").addClass("fail")
+                .text("No QR code detected yet — adjust the crop, rotation or threshold, or send to Raw Import.");
+        }
+    }, 180);
+}
+
+// Pointer position in base coordinates
+function enhancePointer(e) {
+    var view = document.getElementById("enhance-canvas");
+    var rect = view.getBoundingClientRect();
+    var px = (e.clientX - rect.left) * (view.width / rect.width);
+    var py = (e.clientY - rect.top) * (view.height / rect.height);
+    return [px / enhance.view, py / enhance.view];
+}
+
+function enhanceClampCrop() {
+    var b = enhance.base, c = enhance.crop;
+    c.w = Math.max(4, Math.min(b.width, c.w));
+    c.h = Math.max(4, Math.min(b.height, c.h));
+    c.x = Math.min(Math.max(0, c.x), b.width - c.w);
+    c.y = Math.min(Math.max(0, c.y), b.height - c.h);
+}
+
+// Which crop corner (if any) is near the pointer, in base coordinates
+function enhanceNearCorner(pt) {
+    var c = enhance.crop;
+    var tol = 10 / enhance.view;
+    var corners = [[c.x, c.y], [c.x + c.w, c.y], [c.x + c.w, c.y + c.h], [c.x, c.y + c.h]];
+    for (var i = 0; i < 4; i++) {
+        if (Math.abs(pt[0] - corners[i][0]) <= tol && Math.abs(pt[1] - corners[i][1]) <= tol)
+            return i;
+    }
+    return -1;
+}
+
+
+/***
+*
 *	Flood fill algorithm to perform paint-like bucket tool
 *
 *	Reference : https://jsfiddle.net/eWxNE/2/
@@ -2010,7 +2293,8 @@ $(document).ready(function () {
 
             reader.onload = function (e) {
                 $("#hidden-img").attr("src", e.target.result);
-                importFromImage($("#hidden-img").attr("src"), function (data) {
+                var src = $("#hidden-img").attr("src");
+                importFromImage(src, function (data) {
                     if (Array.isArray(data)) {
                         $("#div-new").hide();
                         generateTable(qr_version);
@@ -2020,7 +2304,8 @@ $(document).ready(function () {
                         refreshTable();
                         changed_state = true;
                     } else {
-                        alert(data);
+                        // Direct decode failed : open the enhance tool so the image can be cleaned up
+                        openEnhance(src, "Could not decode this image directly. Clean it up here and try again.");
                     }
                 })
             }
@@ -2221,6 +2506,199 @@ $(document).ready(function () {
         raw_import.offset = [0, 0];
         requestRawImportDraw();
     })
+
+    /* ---------- Enhance & Decode Image ---------- */
+
+    $("#new-btn-import-enhance").click(function () {
+        $("#import-enhance").click();
+        return false;
+    })
+
+    $("#import-enhance").change(function () {
+        if (this.files && this.files[0]) {
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                openEnhance(e.target.result);
+            }
+            reader.readAsDataURL(this.files[0]);
+        }
+        $(this).val("");
+    })
+
+    // Rotation rebuilds the base (and resets the crop)
+    $("#enhance-rotate").on("input change", function () {
+        enhance.angle = parseInt($(this).val());
+        enhanceSyncLabels();
+        enhanceBuildBase();
+        enhanceDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#btn-enhance-rotate90").click(function () {
+        var a = ((enhance.angle + 90 + 180) % 360) - 180;
+        enhance.angle = a;
+        $("#enhance-rotate").val(a);
+        enhanceSyncLabels();
+        enhanceBuildBase();
+        enhanceDraw();
+        enhanceRequestDecode();
+    })
+
+    // Pixel adjustments only redraw and re-decode
+    $("#enhance-scale, #enhance-brightness, #enhance-contrast, #enhance-threshold-val").on("input change", function () {
+        enhanceSyncLabels();
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#enhance-threshold, #enhance-gray, #enhance-sharpen, #enhance-invert, #enhance-smooth").change(function () {
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    // Otsu automatic threshold from the current adjusted luminance
+    $("#btn-enhance-otsu").click(function () {
+        var dctx = enhance.display.getContext("2d");
+        dctx.clearRect(0, 0, enhance.display.width, enhance.display.height);
+        dctx.drawImage(enhance.base, 0, 0, enhance.display.width, enhance.display.height);
+        var data = dctx.getImageData(0, 0, enhance.display.width, enhance.display.height);
+        enhanceAdjust(data, true); // adjust but skip the threshold
+        var hist = new Array(256).fill(0);
+        var d = data.data, total = 0;
+        for (var i = 0; i < d.length; i += 4) {
+            var lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+            hist[lum]++;
+            total++;
+        }
+        var sum = 0;
+        for (var t = 0; t < 256; t++) sum += t * hist[t];
+        var sumB = 0, wB = 0, max = 0, threshold = 128;
+        for (var t2 = 0; t2 < 256; t2++) {
+            wB += hist[t2];
+            if (wB == 0) continue;
+            var wF = total - wB;
+            if (wF == 0) break;
+            sumB += t2 * hist[t2];
+            var mB = sumB / wB;
+            var mF = (sum - sumB) / wF;
+            var between = wB * wF * (mB - mF) * (mB - mF);
+            if (between > max) { max = between; threshold = t2; }
+        }
+        $("#enhance-threshold-val").val(threshold);
+        $("#enhance-threshold").prop("checked", true);
+        enhanceSyncLabels();
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#btn-enhance-reset-crop").click(function () {
+        enhance.crop = { x: 0, y: 0, w: enhance.base.width, h: enhance.base.height };
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    })
+
+    $("#btn-enhance-reset").click(function () {
+        openEnhance(enhance.img.src);
+    })
+
+    $("#btn-enhance-cancel").click(function () {
+        $("#div-img-enhance").hide();
+        $("#div-new").show();
+    })
+
+    $("#btn-enhance-send-raw").click(function () {
+        var out = enhanceProcessed();
+        $("#div-img-enhance").hide();
+        openRawImport(out.canvas.toDataURL("image/png"));
+    })
+
+    $("#btn-enhance-decode").click(function () {
+        var out = enhanceProcessed();
+        importFromImage(out.canvas.toDataURL("image/png"), function (data) {
+            if (Array.isArray(data)) {
+                $("#div-img-enhance").hide();
+                generateTable(qr_version);
+                updateQRArray(data);
+                clearHistory();
+                updateHistory("Load from enhanced image");
+                refreshTable();
+                changed_state = true;
+            } else {
+                $("#enhance-status").removeClass("ok").addClass("fail")
+                    .text("Could not decode: " + data + ". Try adjusting the image or send it to Raw Import.");
+            }
+        })
+    })
+
+    var enhance_view = document.getElementById("enhance-canvas");
+
+    enhance_view.addEventListener("pointerdown", function (e) {
+        if (!enhance.base) return;
+        var pt = enhancePointer(e);
+        var corner = enhanceNearCorner(pt);
+        var c = enhance.crop;
+        if (corner >= 0) {
+            // resize from the opposite corner
+            var opp = [[c.x + c.w, c.y + c.h], [c.x, c.y + c.h], [c.x, c.y], [c.x + c.w, c.y]][corner];
+            enhance.drag = { mode: "resize", anchor: opp };
+        } else if (pt[0] >= c.x && pt[0] <= c.x + c.w && pt[1] >= c.y && pt[1] <= c.y + c.h) {
+            enhance.drag = { mode: "move", start: pt, origin: { x: c.x, y: c.y } };
+        } else {
+            enhance.drag = { mode: "resize", anchor: pt };
+            enhance.crop = { x: pt[0], y: pt[1], w: 0, h: 0 };
+        }
+        enhance_view.setPointerCapture(e.pointerId);
+        e.preventDefault();
+    })
+
+    enhance_view.addEventListener("pointermove", function (e) {
+        if (!enhance.base) return;
+        var pt = enhancePointer(e);
+        if (!enhance.drag) {
+            enhance_view.style.cursor = enhanceNearCorner(pt) >= 0 ? "nwse-resize" :
+                (pt[0] >= enhance.crop.x && pt[0] <= enhance.crop.x + enhance.crop.w &&
+                 pt[1] >= enhance.crop.y && pt[1] <= enhance.crop.y + enhance.crop.h ? "move" : "crosshair");
+            return;
+        }
+        if (enhance.drag.mode === "resize") {
+            var a = enhance.drag.anchor;
+            enhance.crop = {
+                x: Math.min(a[0], pt[0]), y: Math.min(a[1], pt[1]),
+                w: Math.abs(pt[0] - a[0]), h: Math.abs(pt[1] - a[1])
+            };
+        } else {
+            enhance.crop.x = enhance.drag.origin.x + (pt[0] - enhance.drag.start[0]);
+            enhance.crop.y = enhance.drag.origin.y + (pt[1] - enhance.drag.start[1]);
+        }
+        enhanceClampCrop();
+        enhanceRequestDraw();
+    })
+
+    function enhanceEndDrag() {
+        if (enhance.drag) {
+            enhance.drag = null;
+            enhanceClampCrop();
+            enhanceRequestDraw();
+            enhanceRequestDecode();
+        }
+    }
+    enhance_view.addEventListener("pointerup", enhanceEndDrag);
+    enhance_view.addEventListener("pointercancel", enhanceEndDrag);
+
+    // Wheel zooms the crop around the pointer
+    enhance_view.addEventListener("wheel", function (e) {
+        if (!enhance.base) return;
+        e.preventDefault();
+        var pt = enhancePointer(e);
+        var factor = e.deltaY < 0 ? 0.85 : 1 / 0.85;
+        var c = enhance.crop;
+        var nx = pt[0] - (pt[0] - c.x) * factor;
+        var ny = pt[1] - (pt[1] - c.y) * factor;
+        enhance.crop = { x: nx, y: ny, w: c.w * factor, h: c.h * factor };
+        enhanceClampCrop();
+        enhanceRequestDraw();
+        enhanceRequestDecode();
+    }, { passive: false })
 
     $("#menu-new").click(function () {
         if (changed_state) {

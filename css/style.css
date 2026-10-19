@@ -475,6 +475,20 @@ ul {list-style: none;}
 	color: var(--accent);
 }
 
+.tool-item.tool-primary {
+	border-color: var(--accent-strong);
+	background: linear-gradient(180deg, var(--accent-soft), var(--panel-2));
+}
+
+.tool-item.tool-primary .tool-name {
+	color: var(--accent);
+}
+
+.tool-item.tool-primary:hover {
+	background: linear-gradient(180deg, var(--accent-soft), var(--panel-hi));
+	border-color: var(--accent);
+}
+
 @keyframes toolsFlash {
 	0%, 100% { box-shadow: 0 0 0 0 rgba(41, 182, 246, 0); }
 	30% { box-shadow: 0 0 0 2px var(--accent), 0 0 16px var(--accent-soft); }

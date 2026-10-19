@@ -1005,3 +1005,157 @@ function srRecoverPass(data_array, limits) {
         message: message
     };
 }
+
+
+/*************************************************************************
+
+    Auto Recovery
+
+    One-click recovery that chains the recovery tools in the order that
+    works best on heavily damaged codes:
+
+      1. Padding Bits Recovery  - deterministically fills the terminator
+         and padding tail (0xEC / 0x11), which on high versions turns
+         hundreds of unknown data codewords into known ones.
+      2. Smart Recovery         - solves the remaining unknown codewords
+         from the known bits, the data grammar and the RS parity.
+
+    The two steps are repeated while they keep making progress (each pass
+    of padding can expose more for Smart Recovery and vice versa), then
+    the result is decoded to report the final message.
+
+    Returns the same shape as the other recovery tools so it can be
+    previewed and applied with patchingRecovery().
+
+************************************************************************/
+
+// Concatenated data-codeword bits of a stored (masked) module array
+function srDataBits(data_array) {
+    var width = data_array.length;
+    var version = (width - 21) / 4 + 1;
+    var format_info = getFormatInfo(data_array);
+    var data = maskData(data_array, format_info.mask);
+    var rs_blocks = readRSBlocks(data, version, format_info.ecc);
+    var bits = "";
+    for (var i = 0; i < rs_blocks.length; i++)
+        for (var j = 0; j < rs_blocks[i].data.length; j++)
+            bits += rs_blocks[i].data[j].bits;
+    return bits;
+}
+
+// Number of data codewords that still contain at least one unknown bit
+function srUnknownCodewords(bits) {
+    var count = 0;
+    for (var i = 0; i + 8 <= bits.length; i += 8)
+        if (bits.substring(i, i + 8).indexOf("?") != -1)
+            count++;
+    return count;
+}
+
+function autoRecovery(data_array) {
+
+    var format_info = getFormatInfo(data_array);
+    if (!format_info.known)
+        return "ERROR: Format information (error correction level and mask pattern) is unknown. " +
+            "Recover it first with Brute-force Format Info Pattern, then run Auto Recovery again.";
+
+    var version = (data_array.length - 21) / 4 + 1;
+    var ecc_name = ["M", "L", "H", "Q"][format_info.ecc];
+
+    var current = JSON.parse(JSON.stringify(data_array));
+    var origBits = srDataBits(data_array);
+    var unknownStart = srUnknownCodewords(origBits);
+
+    var log = [];
+    log.push("Auto Recovery - version " + version + "-" + ecc_name + ", mask " + format_info.mask);
+    log.push("Unknown data codewords at start: " + unknownStart);
+    log.push("");
+
+    var padSteps = 0, smartSteps = 0, lastSmartInfo = "";
+    var MAX_ROUNDS = 4;
+
+    for (var round = 1; round <= MAX_ROUNDS; round++) {
+        var changedThisRound = false;
+
+        // 1. Padding Bits Recovery
+        try {
+            var before = srDataBits(current);
+            var pad = recoverPaddingBits(JSON.parse(JSON.stringify(current)));
+            if (typeof pad != "string") {
+                var after = srDataBits(pad.result_array);
+                if (after != before) {
+                    current = pad.result_array;
+                    padSteps++;
+                    changedThisRound = true;
+                    log.push("Round " + round + " - Padding Bits Recovery: filled padding tail");
+                }
+            } else if (round == 1) {
+                log.push("Round " + round + " - Padding Bits Recovery skipped: " + pad.replace(/^ERROR:\s*/, ""));
+            }
+        } catch (e) {
+            log.push("Round " + round + " - Padding Bits Recovery error: " + e);
+        }
+
+        // 2. Smart Recovery
+        try {
+            var before2 = srDataBits(current);
+            var smart = smartRecovery(JSON.parse(JSON.stringify(current)));
+            if (typeof smart != "string") {
+                var after2 = srDataBits(smart.result_array);
+                lastSmartInfo = smart.info;
+                if (after2 != before2) {
+                    current = smart.result_array;
+                    smartSteps++;
+                    changedThisRound = true;
+                    log.push("Round " + round + " - Smart Recovery: recovered codewords");
+                }
+            } else if (round == 1) {
+                log.push("Round " + round + " - Smart Recovery: " + smart.replace(/^ERROR:\s*/, ""));
+            }
+        } catch (e) {
+            log.push("Round " + round + " - Smart Recovery error: " + e);
+        }
+
+        if (!changedThisRound)
+            break;
+    }
+
+    var finalBits = srDataBits(current);
+    var unknownEnd = srUnknownCodewords(finalBits);
+
+    log.push("");
+    log.push("Unknown data codewords remaining: " + unknownEnd + " (recovered " + (unknownStart - unknownEnd) + ")");
+
+    // Final decode attempt
+    try {
+        var decoded = QRDecode(JSON.parse(JSON.stringify(current)));
+        if (decoded && decoded.message && (!decoded.error || decoded.error.length == 0)) {
+            log.push("");
+            log.push("Decoded successfully:");
+            log.push(decoded.message);
+        } else if (decoded && decoded.message) {
+            log.push("");
+            log.push("Decoded with warnings (Reed-Solomon reported errors - the result may be wrong):");
+            log.push(decoded.message);
+        } else {
+            log.push("");
+            log.push("Still not fully decodable. Mark any remaining damaged modules as unknown (grey) and run Auto Recovery again, or finish by hand.");
+        }
+    } catch (e) {
+        log.push("");
+        log.push("Decode attempt failed: " + e);
+    }
+
+    if (lastSmartInfo) {
+        log.push("");
+        log.push("----- Smart Recovery detail (last pass) -----");
+        log.push(lastSmartInfo);
+    }
+
+    return {
+        result_array: current,
+        before: origBits,
+        after: finalBits,
+        info: log.join("\n")
+    };
+}

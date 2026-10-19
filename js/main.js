@@ -3166,6 +3166,14 @@ $(document).ready(function () {
         $("#div-tools").hide();
     })
 
+    $("#tools-auto-recovery").click(function () {
+        patchingRecovery(autoRecovery(JSON.parse(JSON.stringify(qr_array))));
+        $("#div-patching-recovery-title").text("Auto Recovery");
+        $("#div-patching-recovery").show();
+
+        $("#div-tools").hide();
+    })
+
     $("#btn-patch-rec-apply").click(function () {
         qr_array = JSON.parse(JSON.stringify(qr_temp_array));
         refreshTable();

@@ -741,6 +741,32 @@ function srToBits(value) {
     return ("00000000" + value.toString(2)).slice(-8);
 }
 
+// Reed-Solomon error correction of a block whose codewords are all known (no erasures).
+// Returns { codewords, errors }, or null when there are too many errors to correct.
+function srErrorCorrect(known, nysm) {
+
+    if (rs_check(known, nysm))
+        return { codewords: known.slice(), errors: 0 };
+
+    var decoded;
+    try {
+        decoded = RS.decode(known.slice(), nysm, []);
+    } catch (e) {
+        decoded = String(e);
+    }
+    if (typeof decoded == "string")
+        return null;
+
+    var full = RS.encode(decoded, nysm);
+    var errors = 0;
+    for (var i = 0; i < full.length; i++) {
+        if (full[i] != known[i])
+            errors++;
+    }
+
+    return { codewords: full, errors: errors };
+}
+
 /*
     About how many unknown modules must still be identified in a block before it can be
     solved: the candidates hold more possibilities than the parity can check (sum of log2 of
@@ -863,9 +889,18 @@ function srRecoverPass(data_array, limits) {
         var unknown = by_bits.filter(function (values) { return values.length > 1; }).length;
         var line = "Block " + (b + 1) + ": " + unknown + " unknown codeword(s)";
         if (unknown == 0) {
-            solutions.push([by_bits.map(function (values) { return values[0]; })]);
-            lines.push(line + ", nothing to recover");
-            status.push("nothing");
+            // No erasures, but known modules can still be wrong: run plain error correction
+            var known = by_bits.map(function (values) { return values[0]; });
+            var fixed = srErrorCorrect(known, nysm);
+            if (fixed == null) {
+                solutions.push(null);
+                lines.push(line + ", errors detected but too many to correct: some known modules are wrong");
+                status.push("open");
+            } else {
+                solutions.push([fixed.codewords]);
+                lines.push(line + (fixed.errors == 0 ? ", nothing to recover" : ", " + fixed.errors + " error(s) corrected"));
+                status.push(fixed.errors == 0 ? "nothing" : "recovered");
+            }
             continue;
         }
 
@@ -879,24 +914,27 @@ function srRecoverPass(data_array, limits) {
             if (res.status != "no_solution")
                 line += " (grammar ignored)";
         }
-        if (res.status == "no_solution" && unknown <= nysm) {
-            // Some known modules are probably wrong: let RS correct errors too
+        if (res.status == "no_solution") {
+            // Erasures alone are inconsistent, so some known modules are wrong. Let RS correct
+            // errors too, using the grammar-fixed codewords as known to keep the erasure count down.
             var erasures = [];
-            var msg = by_bits.map(function (values, j) {
+            var msg = by_grammar.map(function (values, j) {
                 if (values.length > 1)
                     erasures.push(j);
                 return values.length == 1 ? values[0] : 0;
             });
-            // The decoder can throw on some inputs instead of returning an error message
-            var decoded;
-            try {
-                decoded = RS.decode(msg, nysm, erasures);
-            } catch (e) {
-                decoded = String(e);
-            }
-            if (typeof decoded != "string") {
-                res = { status: "solved", solutions: [RS.encode(decoded, nysm)], count: 1 };
-                line += " (corrected as errors and erasures)";
+            if (erasures.length <= nysm) {
+                // The decoder can throw on some inputs instead of returning an error message
+                var decoded;
+                try {
+                    decoded = RS.decode(msg, nysm, erasures);
+                } catch (e) {
+                    decoded = String(e);
+                }
+                if (typeof decoded != "string") {
+                    res = { status: "solved", solutions: [RS.encode(decoded, nysm)], count: 1 };
+                    line += " (corrected as errors and erasures)";
+                }
             }
         }
 
@@ -914,7 +952,7 @@ function srRecoverPass(data_array, limits) {
         else if (res.status == "too_large")
             line += ", search too large (" + res.total + " combinations): block left unchanged, " + needed;
         else
-            line += ", no solution: some known modules are probably wrong";
+            line += ", no solution: too many unknown and wrong modules for the error correction. Re-check the modules of this block against the image and mark the ones you are unsure of as grey";
         lines.push(line);
 
         solutions.push(res.solutions.length && complete ? res.solutions : null);

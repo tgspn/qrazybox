@@ -219,6 +219,7 @@ function refreshTable() {
             }
         }
     }
+    scheduleLiveDecode();
 }
 
 /***
@@ -599,6 +600,7 @@ function toggleResult() {
         }
     }
     updateStatusBar();
+    scheduleLiveDecode();
 }
 
 /***
@@ -753,6 +755,7 @@ function decodeFromBase64(img, callback) {
 }
 
 function importFromImage(src, cb) {
+    setSampleFromSrc(src);
     var img = new Image();
     img.crossOrigin = "Anonymous";
     img.onload = function () {
@@ -849,6 +852,7 @@ var raw_import = {
 };
 
 function openRawImport(src) {
+    setSampleFromSrc(src);
     var img = new Image();
     img.onload = function () {
         var ratio = Math.min(1, 4096 / Math.max(img.width, img.height));
@@ -1272,6 +1276,7 @@ var ENHANCE_MAX_W = 740;
 var ENHANCE_MAX_H = 540;
 
 function openEnhance(src, note) {
+    setSampleFromSrc(src);
     var img = new Image();
     img.onload = function () {
         enhance.img = img;
@@ -1595,6 +1600,7 @@ function updateHistory(msg) {
         }
     }
     $(".history").html(html);
+    scheduleLiveDecode();
 }
 
 /***
@@ -1682,6 +1688,224 @@ function extractInfo() {
         }
     }
     $("#div-extract").html(html);
+}
+
+/***
+*
+*	Live decode : continuously force-decode the current grid and show the
+*	"Final Decoded string" in the panel below the workspace, in real time.
+*
+***/
+var _live_decode_timer = null;
+var _live_decode_raw = "";
+
+function scheduleLiveDecode() {
+    if (_live_decode_timer) clearTimeout(_live_decode_timer);
+    _live_decode_timer = setTimeout(updateLiveDecode, 130);
+}
+
+/*	Render the decoded string as HTML : printable characters are escaped and
+	shown as-is, unrecoverable (unknown) bytes are drawn as a dim gap marker. */
+function liveDecodeHtml(msg) {
+    var html = "";
+    for (var i = 0; i < msg.length; i++) {
+        var c = msg.charCodeAt(i);
+        if ((c < 32 && c !== 9 && c !== 10 && c !== 13) || c === 127) {
+            html += "<span class=\"live-decode-gap\">▯</span>";
+        } else if (msg[i] === "&") {
+            html += "&amp;";
+        } else if (msg[i] === "<") {
+            html += "&lt;";
+        } else if (msg[i] === ">") {
+            html += "&gt;";
+        } else {
+            html += msg[i];
+        }
+    }
+    return html;
+}
+
+function updateLiveDecode() {
+    _live_decode_timer = null;
+
+    // Keep the "Current QR" reference view in sync with the grid
+    if (sample_view === "current") renderCurrentSampleQR();
+
+    var box = document.getElementById("live-decode");
+    if (!box) return;
+
+    var active = typeof qr_array !== "undefined" && qr_array && qr_array.length
+        && $("#home-box").css("display") === "none"
+        && !$("#btn-switch-mode").hasClass("active")
+        && !extract_info_mode;
+
+    if (!active) {
+        box.classList.add("hide");
+        return;
+    }
+    box.classList.remove("hide");
+
+    var msgEl = document.getElementById("live-decode-msg");
+    var metaEl = document.getElementById("live-decode-meta");
+
+    // QRDecode is noisy on the console and mutates its input : feed it a clone
+    // and silence logging for the duration of the live pass.
+    var result = null;
+    var _log = console.log, _warn = console.warn, _err = console.error;
+    try {
+        console.log = console.warn = console.error = function () { };
+        result = QRDecode(JSON.parse(JSON.stringify(qr_array)));
+    } catch (e) {
+        result = null;
+    } finally {
+        console.log = _log; console.warn = _warn; console.error = _err;
+    }
+
+    var msg = result && typeof result.message === "string" ? result.message : "";
+    _live_decode_raw = msg;
+
+    // Always show the best partial recovery : even a mostly-unknown grid shows
+    // the bytes we do have, with the missing ones marked as gaps.
+    if (msg.length) {
+        msgEl.innerHTML = liveDecodeHtml(msg);
+        msgEl.classList.remove("live-decode-empty");
+        box.classList.remove("is-empty");
+
+        var parts = [qr_array.length + "×" + qr_array.length];
+        if (result.ecc && /^[LMQH]$/.test(result.ecc)) parts.push("ECC " + result.ecc);
+        if (result.mask_pattern !== undefined && result.mask_pattern >= 0) parts.push("mask " + result.mask_pattern);
+        if (result.data_module_count) {
+            var pct = result.erasure_count / result.data_module_count * 100;
+            parts.push(pct.toFixed(1) + "% unknown");
+        }
+        metaEl.textContent = parts.join("  ·  ");
+    } else {
+        msgEl.textContent = "Waiting for data…";
+        msgEl.classList.add("live-decode-empty");
+        box.classList.add("is-empty");
+        metaEl.textContent = "";
+    }
+}
+
+/*	Lightweight toast notification (bottom of the header). */
+var _toast_timer = null;
+var _toast_hide_timer = null;
+
+function showToast(msg) {
+    var t = document.getElementById("toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.remove("hide");
+    // next frame so the transition runs
+    requestAnimationFrame(function () { t.classList.add("show"); });
+    if (_toast_timer) clearTimeout(_toast_timer);
+    if (_toast_hide_timer) clearTimeout(_toast_hide_timer);
+    _toast_timer = setTimeout(function () {
+        t.classList.remove("show");
+        _toast_hide_timer = setTimeout(function () { t.classList.add("hide"); }, 260);
+    }, 1800);
+}
+
+/*	Copy text to the clipboard with a fallback for insecure / old contexts. */
+function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).catch(function () { legacyCopy(text); });
+    }
+    legacyCopy(text);
+    return Promise.resolve();
+}
+
+function legacyCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { }
+    document.body.removeChild(ta);
+}
+
+/***
+*
+*	Reference box : toggle between the original image and a live render of the
+*	current QR grid. Both reuse data already in the page (no re-upload).
+*
+***/
+var sample_view = "original";
+
+function setSampleFromSrc(src) {
+    var img = document.getElementById("img-sample");
+    if (!img || !src) return;
+    img.src = src;
+    if (sample_view === "original") $(img).show();
+}
+
+function renderCurrentSampleQR() {
+    var cv = document.getElementById("sample-current");
+    if (!cv || typeof qr_array === "undefined" || !qr_array || !qr_array.length) return;
+
+    var n = qr_array.length;
+    var cell = 6;
+    var quiet = 2;                       // quiet-zone border in cells
+    var dim = (n + quiet * 2) * cell;
+    cv.width = dim;
+    cv.height = dim;
+
+    var ctx = cv.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, dim, dim);
+
+    for (var i = 0; i < n; i++) {
+        for (var j = 0; j < n; j++) {
+            var v = qr_array[i][j];
+            if (v === 1) ctx.fillStyle = "#000000";
+            else if (v === 0) continue;  // white, already painted
+            else ctx.fillStyle = "#c9ccd2"; // unknown module
+            ctx.fillRect((j + quiet) * cell, (i + quiet) * cell, cell, cell);
+        }
+    }
+}
+
+function setSampleView(view) {
+    sample_view = view;
+    $("#sample-toggle .seg-btn").removeClass("active");
+    $("#sample-toggle .seg-btn[data-view='" + view + "']").addClass("active");
+
+    var img = document.getElementById("img-sample");
+    var cv = document.getElementById("sample-current");
+    if (view === "current") {
+        if (img) img.style.display = "none";
+        if (cv) cv.classList.remove("hide");
+        renderCurrentSampleQR();
+    } else {
+        if (cv) cv.classList.add("hide");
+        // only show the image if one has actually been loaded
+        if (img && img.getAttribute("src") && img.getAttribute("src") !== "#") img.style.display = "block";
+    }
+}
+
+/***
+*
+*	Import a QR image straight from a data URL (used by paste and drag & drop).
+*	Mirrors the "Import from Image" flow : auto-decode, else open the enhancer.
+*
+***/
+function importImageSrc(src) {
+    importFromImage(src, function (data) {
+        if (Array.isArray(data)) {
+            $(".overlay:visible").hide();
+            generateTable(qr_version);
+            updateQRArray(data);
+            clearHistory();
+            updateHistory("Load from image");
+            refreshTable();
+            changed_state = true;
+            showToast("Imported from image");
+        } else {
+            openEnhance(src, "Could not decode this image directly. Clean it up here and try again.");
+        }
+    });
 }
 
 var brute_result = [];
@@ -2976,6 +3200,7 @@ $(document).ready(function () {
         extractInfo();
         extract_info_mode = true;
         updateStatusBar();
+        scheduleLiveDecode();
     })
 
     $("#btn-extract-show-rs, #btn-extract-show-error").click(function () {
@@ -3014,6 +3239,7 @@ $(document).ready(function () {
         }
         extract_info_mode = false;
         updateStatusBar();
+        scheduleLiveDecode();
     })
 
     /****************************
@@ -3288,7 +3514,12 @@ $(document).ready(function () {
     ****************************/
     $("#sample-file").change(function () {
         loadImage(this, "#img-sample");
+        setSampleView("original");
         $("#img-sample").show();
+    })
+
+    $("#sample-toggle .seg-btn").on("click", function () {
+        setSampleView($(this).attr("data-view"));
     })
 
     /****************************
@@ -3503,6 +3734,7 @@ $(document).ready(function () {
                 elem.className = "";
                 qr_array[i][j] = -1;
             }
+            scheduleLiveDecode();
         }
     }
 
@@ -3591,6 +3823,83 @@ $(document).ready(function () {
     window.addEventListener("dblclick", function (e) {
         if (!$(".overlay:visible").length && isWorkspaceBackground(e.target))
             setGridOffset(0, 0);
+    });
+
+    // ----- Copy the live-decoded string -----
+    $("#live-decode-copy").on("click", function (e) {
+        e.stopPropagation();
+        // Replace unrecoverable (control) bytes with "?" so the copy is plain text
+        var text = (_live_decode_raw || "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "?");
+        if (!text.length) { showToast("Nothing to copy yet"); return; }
+        copyToClipboard(text);
+        showToast("Decoded string copied");
+    });
+
+    // ----- Paste an image anywhere to import it -----
+    window.addEventListener("paste", function (e) {
+        if ($("input, textarea").is(":focus")) return;
+        var cb = e.clipboardData || window.clipboardData;
+        if (!cb || !cb.items) return;
+        for (var i = 0; i < cb.items.length; i++) {
+            var it = cb.items[i];
+            if (it.type && it.type.indexOf("image") === 0) {
+                var file = it.getAsFile();
+                if (!file) continue;
+                e.preventDefault();
+                var reader = new FileReader();
+                reader.onload = function (ev) { importImageSrc(ev.target.result); };
+                reader.readAsDataURL(file);
+                break;
+            }
+        }
+    });
+
+    // ----- Drag & drop an image file anywhere to import it -----
+    // The hint is driven by a timer reset on every dragover : it self-heals
+    // if the drag leaves the window without firing a dragleave/drop.
+    var drag_hide_timer = null;
+
+    var dragHasImage = function (dt) {
+        if (!dt) return false;
+        if (dt.items && dt.items.length) {
+            for (var i = 0; i < dt.items.length; i++)
+                if (dt.items[i].kind === "file" && dt.items[i].type.indexOf("image") === 0) return true;
+            return false;
+        }
+        if (dt.types) {
+            for (var k = 0; k < dt.types.length; k++)
+                if (dt.types[k] === "Files") return true;
+        }
+        return false;
+    };
+
+    var hideDropHint = function () {
+        if (drag_hide_timer) { clearTimeout(drag_hide_timer); drag_hide_timer = null; }
+        $("#drop-hint").addClass("hide");
+    };
+
+    window.addEventListener("dragover", function (e) {
+        if (!dragHasImage(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        $("#drop-hint").removeClass("hide");
+        if (drag_hide_timer) clearTimeout(drag_hide_timer);
+        drag_hide_timer = setTimeout(hideDropHint, 160);
+    });
+
+    window.addEventListener("dragend", hideDropHint);
+    window.addEventListener("drop", function (e) {
+        hideDropHint();
+        if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+        var file = null;
+        for (var i = 0; i < e.dataTransfer.files.length; i++) {
+            if (e.dataTransfer.files[i].type.indexOf("image") === 0) { file = e.dataTransfer.files[i]; break; }
+        }
+        if (!file) return;
+        e.preventDefault();
+        var reader = new FileReader();
+        reader.onload = function (ev) { importImageSrc(ev.target.result); };
+        reader.readAsDataURL(file);
     });
 
     window.addEventListener("keydown", function (e) {

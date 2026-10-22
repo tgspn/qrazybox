@@ -213,9 +213,14 @@
 
 		<!-- START IMAGE SAMPLE TOOLBOX -->
 		<div class="side-box  noselect" id="box-sample">
-			<h5>Original Sample :</h5>
-			<div class="sample-box">
+			<h5>Reference :</h5>
+			<div class="seg-toggle" id="sample-toggle">
+				<button type="button" class="seg-btn active" data-view="original">Original</button>
+				<button type="button" class="seg-btn" data-view="current">Current QR</button>
+			</div>
+			<div class="sample-box" id="sample-box">
 				<img src="#" id="img-sample">
+				<canvas id="sample-current" class="hide"></canvas>
 			</div>
 			<input id="sample-file" type="file" class="hide">
 			<div class="space"></div>
@@ -256,6 +261,32 @@
 		</div>
 	</div>
 	<!-- END MAIN WORKSPACE -->
+
+	<!-- START LIVE DECODE PANEL -->
+	<div class="live-decode hide noselect" id="live-decode">
+		<div class="live-decode-head">
+			<span class="live-decode-label">Final decoded string</span>
+			<div class="live-decode-right">
+				<span class="live-decode-meta" id="live-decode-meta"></span>
+				<button class="live-decode-copy" id="live-decode-copy" title="Copy decoded string">Copy</button>
+			</div>
+		</div>
+		<div class="live-decode-body live-decode-empty" id="live-decode-msg">Waiting for data&hellip;</div>
+	</div>
+	<!-- END LIVE DECODE PANEL -->
+
+	<!-- START TOAST -->
+	<div class="toast hide noselect" id="toast"></div>
+	<!-- END TOAST -->
+
+	<!-- START DROP HINT OVERLAY -->
+	<div class="drop-hint hide" id="drop-hint">
+		<div class="drop-hint-inner">
+			<h3>Drop image to import</h3>
+			<h6>A QR photo or screenshot &middot; we'll decode it automatically</h6>
+		</div>
+	</div>
+	<!-- END DROP HINT OVERLAY -->
 
 	<!-- START WELCOME PAGE OVERLAY -->
 	<div class="overlay" id="home-box">

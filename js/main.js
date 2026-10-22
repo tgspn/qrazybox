@@ -555,7 +555,7 @@ function toggleResult() {
 
         generateResult();
         $("#btn-switch-mode").addClass("active");
-        $("#div-tool-work, #box-history, #box-tools-list").hide();
+        $("#div-tool-work, #box-tools-list").hide();
         $("#div-tool-result").show();
         $("#btn-switch-mode").text("Decode Mode");
         $("#box-tools-masking").hide();
@@ -591,7 +591,7 @@ function toggleResult() {
         $("#btn-switch-mode").removeClass("active");
         $("body").css("background-color", "");
         $("#div-tool-result").hide();
-        $("#div-tool-work, #box-history, #box-tools-list").show();
+        $("#div-tool-work, #box-tools-list").show();
         $("#btn-switch-mode").text("Editor Mode");
 
         if (analysis_mode) {
@@ -1725,31 +1725,9 @@ function liveDecodeHtml(msg) {
     return html;
 }
 
-function updateLiveDecode() {
-    _live_decode_timer = null;
-
-    // Keep the "Current QR" reference view in sync with the grid
-    if (sample_view === "current") renderCurrentSampleQR();
-
-    var box = document.getElementById("live-decode");
-    if (!box) return;
-
-    var active = typeof qr_array !== "undefined" && qr_array && qr_array.length
-        && $("#home-box").css("display") === "none"
-        && !$("#btn-switch-mode").hasClass("active")
-        && !extract_info_mode;
-
-    if (!active) {
-        box.classList.add("hide");
-        return;
-    }
-    box.classList.remove("hide");
-
-    var msgEl = document.getElementById("live-decode-msg");
-    var metaEl = document.getElementById("live-decode-meta");
-
-    // QRDecode is noisy on the console and mutates its input : feed it a clone
-    // and silence logging for the duration of the live pass.
+/*	Force-decode the current grid once (clone + silenced console), shared by the
+	live-decode box and the Information panel. */
+function forceDecodeCurrent() {
     var result = null;
     var _log = console.log, _warn = console.warn, _err = console.error;
     try {
@@ -1760,6 +1738,41 @@ function updateLiveDecode() {
     } finally {
         console.log = _log; console.warn = _warn; console.error = _err;
     }
+    return result;
+}
+
+function updateLiveDecode() {
+    _live_decode_timer = null;
+
+    // Keep the "Current QR" reference view in sync with the grid
+    if (sample_view === "current") renderCurrentSampleQR();
+
+    var loaded = typeof qr_array !== "undefined" && qr_array && qr_array.length
+        && $("#home-box").css("display") === "none";
+
+    var box = document.getElementById("live-decode");
+
+    if (!loaded) {
+        if (box) box.classList.add("hide");
+        renderInfoPanel(null);
+        return;
+    }
+
+    // One decode feeds both the bottom box and the right-panel information
+    var result = forceDecodeCurrent();
+    renderInfoPanel(result);
+
+    if (!box) return;
+
+    // The bottom "Final decoded string" box shows in editor mode only
+    if ($("#btn-switch-mode").hasClass("active") || extract_info_mode) {
+        box.classList.add("hide");
+        return;
+    }
+    box.classList.remove("hide");
+
+    var msgEl = document.getElementById("live-decode-msg");
+    var metaEl = document.getElementById("live-decode-meta");
 
     var msg = result && typeof result.message === "string" ? result.message : "";
     _live_decode_raw = msg;
@@ -1785,6 +1798,73 @@ function updateLiveDecode() {
         box.classList.add("is-empty");
         metaEl.textContent = "";
     }
+}
+
+/*	Render the live QR information into the right-panel Information box. */
+function escHtml(s) {
+    if (s === undefined || s === null) return "—";
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function infoRow(k, v, mini) {
+    return '<div class="info-row' + (mini ? ' info-row-mini' : '') + '">'
+        + '<span class="info-k">' + k + '</span>'
+        + '<span class="info-v">' + escHtml(v) + '</span></div>';
+}
+
+function renderInfoPanel(result) {
+    var el = document.getElementById("info-panel");
+    if (!el) return;
+
+    if (!result || typeof qr_array === "undefined" || !qr_array || !qr_array.length) {
+        el.innerHTML = '<p class="info-empty">No project loaded</p>';
+        return;
+    }
+
+    var size = qr_array.length;
+    var version = (size - 17) / 4;
+    var ecc = /^[LMQH]$/.test(result.ecc) ? result.ecc : "—";
+    var mask = (result.mask_pattern !== undefined && result.mask_pattern >= 0) ? result.mask_pattern : "—";
+    var miss = result.data_module_count
+        ? result.erasure_count + " B (" + (result.erasure_count / result.data_module_count * 100).toFixed(2) + "%)"
+        : (result.erasure_count || 0) + " B";
+
+    var html = "";
+    html += infoRow("QR version", version + " (" + size + "×" + size + ")");
+    html += infoRow("ECC level", ecc);
+    html += infoRow("Mask pattern", mask);
+    html += infoRow("Missing bytes", miss);
+
+    html += '<div class="info-sep"></div>';
+    html += '<div class="info-klabel">Decoded data</div>';
+    if (typeof result.message === "string" && result.message.length) {
+        html += '<div class="info-decoded">' + liveDecodeHtml(result.message) + '</div>';
+    } else {
+        html += '<div class="info-decoded info-empty">—</div>';
+    }
+
+    // Segments + raw bits (collapsed by default to keep the panel compact)
+    var segs = "";
+    for (var i = 0; i < (result.data_bits_count || 0); i++) {
+        segs += '<div class="info-seg">'
+            + '<div class="info-kline">Segment ' + (i + 1) + '</div>'
+            + infoRow("Mode", result.mode ? result.mode[i] : null, true)
+            + infoRow("Char count", result.count ? result.count[i] : null, true)
+            + infoRow("Decoded", result.decoded ? result.decoded[i] : null, true)
+            + '</div>';
+    }
+
+    var raw = "";
+    if (result.data_blocks)
+        raw += '<div class="info-klabel">Data blocks</div><div class="info-mono">' + escHtml(result.data_blocks) + '</div>';
+    if (result.data_bits)
+        raw += '<div class="info-klabel">Final data bits</div><div class="info-mono">' + escHtml(result.data_bits) + '</div>';
+
+    if (segs || raw) {
+        html += '<details class="info-details"><summary>Segments &amp; raw bits</summary>' + segs + raw + '</details>';
+    }
+
+    el.innerHTML = html;
 }
 
 /*	Lightweight toast notification (bottom of the header). */
@@ -2980,6 +3060,10 @@ $(document).ready(function () {
             }
             $("#list-load").html(element);
         }
+    })
+
+    $("#menu-history").click(function () {
+        $("#div-history").show();
     })
 
     $("#menu-tools").click(function () {

@@ -39,6 +39,9 @@
 			<a id="menu-save" href="javascript:void(0);">
 				<h4>Save</h4>
 			</a>
+			<a id="menu-history" href="javascript:void(0);">
+				<h4>History</h4>
+			</a>
 			<a id="menu-tools" href="javascript:void(0);">
 				<h4>Tools</h4>
 			</a>
@@ -232,14 +235,14 @@
 		</div>
 		<!-- END IMAGE SAMPLE TOOLBOX -->
 
-		<!-- START HISTORY TOOLBOX -->
-		<div class="side-box  noselect" id="box-history">
-			<h5>History :</h5>
-			<div class="history">
-
+		<!-- START INFORMATION TOOLBOX -->
+		<div class="side-box  noselect" id="box-info">
+			<h5>Information :</h5>
+			<div class="info-panel" id="info-panel">
+				<p class="info-empty">No project loaded</p>
 			</div>
 		</div>
-		<!-- END HISTORY TOOLBOX -->
+		<!-- END INFORMATION TOOLBOX -->
 
 	</div>
 	<!-- END RIGHT TOOLBOX -->
@@ -490,6 +493,22 @@
 		</center>
 	</div>
 	<!-- END LOAD OVERLAY -->
+
+	<!-- START HISTORY OVERLAY -->
+	<div class="overlay hide" id="div-history">
+		<center>
+			<div class="box">
+				<h3>History</h3>
+				<div class="space"></div>
+				<h6 class="info-hint">Click a step to jump back or forward. Shortcuts: Z / X.</h6>
+				<div class="space small"></div>
+				<div class="history"></div>
+				<div class="space"></div>
+				<button onclick="$('#div-history').hide();">Close</button>
+			</div>
+		</center>
+	</div>
+	<!-- END HISTORY OVERLAY -->
 
 	<!-- START ABOUT OVERLAY -->
 	<div class="overlay hide" id="div-about">

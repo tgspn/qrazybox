@@ -598,7 +598,7 @@ function toggleResult() {
         $("#btn-switch-mode").text("Editor Mode");
 
         if (analysis_mode) {
-            $("#box-work").hide();
+            $("#box-work").show();
             $("#box-tools-analysis").show();
         }
     }
@@ -2780,17 +2780,22 @@ var message_selection = [];
 var module_edit_mode = false;
 
 /***
-*	Set a single module (guessed from the image) and re-decode, so the user can see
-*	whether that guess helps resolve the region.
+*	Paint a single module with the active painter colour and re-decode, so the user can
+*	see whether that value helps resolve the region. The painter (black / white / eraser)
+*	stays visible, so clicking sets exactly the colour chosen, with no cycling.
 ***/
 function setModuleFromAnalysis(x, y) {
 
-    // Cycle the drawn value : unknown -> black -> white -> unknown
-    var current = qr_array[x][y];
-    qr_array[x][y] = current == -1 ? 1 : (current == 1 ? 0 : -1);
+    // Painter : 0 = black (1), 1 = white (0), 2 = eraser (unknown, -1)
+    var value = active_painter == "1" ? 0 : (active_painter == "2" ? -1 : 1);
+
+    if (fill_painter)
+        floodFill(x, y, qr_array[x][y], value);
+    else
+        qr_array[x][y] = value;
 
     refreshTable();
-    updateHistory("Module set (" + x + "," + y + ")");
+    updateHistory("Module painted (" + x + "," + y + ")");
     changed_state = true;
 
     // Rebuild the analysis overlay and decoded message on the new value
@@ -4002,7 +4007,9 @@ $(document).ready(function () {
             $("#data-analysis-decoded").val("");
 
             $(this).addClass("active");
-            $("#box-work").hide();
+            // Keep the painter and image-overlay tools visible : with Edit modules on, the
+            // painter's colour is used to paint squares directly.
+            $("#box-work").show();
             $("#box-tools-analysis").show();
             $("#analysis-float").removeClass("hide");
             activateAnalysisMode();

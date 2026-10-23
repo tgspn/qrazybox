@@ -2821,8 +2821,18 @@ function updateByteNav() {
     }
 }
 
+// Bring the selected byte's modules into view on the grid
+function scrollToByteModules(index) {
+    var block = qr_data_block[index];
+    if (!block || !block.modules[0])
+        return;
+    var cell = document.getElementById("qr-overlay-" + block.modules[0]);
+    if (cell)
+        cell.scrollIntoView({ block: "center", inline: "center" });
+}
+
 // Select a single byte by its data block index (used by clicks and the prev / next buttons)
-function selectSingleByte(index, scroll) {
+function selectSingleByte(index, scrollText, scrollGrid) {
     message_selection = [index];
     $(".msg-char").removeClass("selected");
     var span = $(".msg-char[data-idx='" + index + "']");
@@ -2831,8 +2841,10 @@ function selectSingleByte(index, scroll) {
     highlightMessageSelection();
     updateNoteField();
     updateByteNav();
-    if (scroll && span.length)
+    if (scrollText && span.length)
         span[0].scrollIntoView({ block: "nearest" });
+    if (scrollGrid)
+        scrollToByteModules(index);
 }
 
 // Move the selection to the previous / next byte, wrapping around
@@ -2842,7 +2854,7 @@ function stepByte(delta) {
         return;
     var pos = message_selection.length ? indices.indexOf(message_selection[0]) : -1;
     pos = (pos + delta + indices.length) % indices.length;
-    selectSingleByte(indices[pos], true);
+    selectSingleByte(indices[pos], true, true);
 }
 
 // After a re-decode, re-select the byte that was being followed so the user keeps their place
@@ -2852,7 +2864,7 @@ function restoreByteSelection() {
     for (var i = 0; i < qr_data_block.length; i++) {
         if (qr_data_block[i].type == "Message data" && qr_data_block[i].modules[0] == selected_byte_key
             && $(".msg-char[data-idx='" + i + "']").length) {
-            selectSingleByte(i, true);
+            selectSingleByte(i, true, true);
             return;
         }
     }
@@ -2958,7 +2970,8 @@ function selectMessageByBlock(index) {
         return;
     }
 
-    selectSingleByte(index, true);
+    // Grid click : the cell is already visible, so scroll the text panel but don't re-center the grid
+    selectSingleByte(index, true, false);
 }
 
 /***
@@ -4226,19 +4239,25 @@ $(document).ready(function () {
     })
 
     $(document).on("mouseover", ".hoverable:not(.active)", function () {
-        var cls = $(this).attr("class").split(" ").pop();
+        // Don't preview-highlight on hover while a byte is selected or editing modules,
+        // so hovering doesn't disturb the current selection
+        if (message_selection.length > 0 || module_edit_mode)
+            return;
+        var cls = ($(this).attr("class").match(/data-block-\d+/) || [])[0];
+        if (!cls)
+            return;
         $("#qr-overlay td." + cls).each(function () {
             $(this).css("opacity", "0.5");
         })
-
-        if (!$("#qr-overlay td.active:not(." + cls + ")").length) {
-            //selectBlock(cls);
-        }
     })
 
     $(document).on("mouseleave", ".hoverable:not(.active)", function () {
-        var cls = $(this).attr("class").split(" ").pop();
-        $("#qr-overlay td." + cls).each(function () {
+        if (message_selection.length > 0 || module_edit_mode)
+            return;
+        var cls = ($(this).attr("class").match(/data-block-\d+/) || [])[0];
+        if (!cls)
+            return;
+        $("#qr-overlay td." + cls + ":not(.sel-recover)").each(function () {
             $(this).css("opacity", "0");
         })
     })
@@ -4305,6 +4324,8 @@ $(document).ready(function () {
         msg_dragging = true;
         msg_anchor = parseInt($(this).attr("data-idx"));
         applyMessageRange(msg_anchor);
+        // Clicking a character in the message moves the grid view to that byte
+        scrollToByteModules(msg_anchor);
     });
 
     // Save the note for the currently selected byte

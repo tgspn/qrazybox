@@ -2578,6 +2578,23 @@ function generateDataBlocks() {
 
     while (data_block.length != 1) {
 
+        // ECI mode : 4-bit indicator + an assignment number of 8, 16 or 24 bits
+        if (data_block.substring(0, 4) == "0111") {
+            pushBlock("Mode indicator", "0111", "ECI mode");
+            data_block = data_block.substring(4);
+
+            var eci_len, eci_prefix;
+            if (data_block.substring(0, 1) == "0") { eci_len = 8; eci_prefix = 1; }
+            else if (data_block.substring(0, 2) == "10") { eci_len = 16; eci_prefix = 2; }
+            else if (data_block.substring(0, 3) == "110") { eci_len = 24; eci_prefix = 3; }
+            else break;
+
+            var eci_bits = data_block.substring(0, eci_len);
+            pushBlock("ECI designator", eci_bits, parseInt(eci_bits.substring(eci_prefix), 2));
+            data_block = data_block.substring(eci_len);
+            continue;
+        }
+
         if (data_block.substring(0, 4) == "0001") {
             var enc_mode = "Numeric mode";
         } else if (data_block.substring(0, 4) == "0010") {
@@ -2772,6 +2789,9 @@ function renderDecodedMessage() {
     for (var i = 0; i < qr_data_block.length; i++) {
         if (qr_data_block[i].type != "Message data")
             continue;
+        // Skip pieces whose modules ran past the grid (corrupt character count)
+        if (qr_data_block[i].modules.indexOf(undefined) != -1)
+            continue;
         var text = String(qr_data_block[i].decoded);
         // Show control / unknown bytes as a placeholder so the garbage is visible and selectable
         var hasUnknown = qr_data_block[i].value.indexOf("?") != -1;
@@ -2816,6 +2836,8 @@ function recoverMessageSelection() {
     for (var s = 0; s < message_selection.length; s++) {
         var modules = qr_data_block[message_selection[s]].modules;
         for (var m = 0; m < modules.length; m++) {
+            if (!modules[m])
+                continue;
             var cord = modules[m].split('-');
             temp[cord[0]][cord[1]] = -1;
         }

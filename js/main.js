@@ -2776,6 +2776,28 @@ function generateDataBlocks() {
 // Selected qr_data_block indices in the "Decoded message" panel
 var message_selection = [];
 
+// Click a grid module to set its value while analysing (guided by the image overlay)
+var module_edit_mode = false;
+
+/***
+*	Set a single module (guessed from the image) and re-decode, so the user can see
+*	whether that guess helps resolve the region.
+***/
+function setModuleFromAnalysis(x, y) {
+
+    // Cycle the drawn value : unknown -> black -> white -> unknown
+    var current = qr_array[x][y];
+    qr_array[x][y] = current == -1 ? 1 : (current == 1 ? 0 : -1);
+
+    refreshTable();
+    updateHistory("Module set (" + x + "," + y + ")");
+    changed_state = true;
+
+    // Rebuild the analysis overlay and decoded message on the new value
+    activateAnalysisMode();
+    scheduleLiveDecode();
+}
+
 /***
 *	Render the decoded message as selectable characters, each tied to its data block,
 *	so the user can select a damaged region and recover it (Recover selection).
@@ -3940,6 +3962,9 @@ $(document).ready(function () {
 
         if ($(this).hasClass("active")) {
             analysis_mode = false;
+            module_edit_mode = false;
+            $("#btn-analysis-edit").removeClass("active");
+            $("#analysis-edit-hint").addClass("hide");
 
             $(this).removeClass("active");
             $("#box-work").show();
@@ -4068,6 +4093,14 @@ $(document).ready(function () {
     })
 
     $(document).on("click", ".hoverable", function () {
+        // In module-edit mode, a click sets the value of that single module instead
+        if (module_edit_mode) {
+            var id = $(this).attr("id");   // qr-overlay-<x>-<y>
+            var parts = id.split("-");
+            setModuleFromAnalysis(parseInt(parts[2]), parseInt(parts[3]));
+            return;
+        }
+
         $("#qr-overlay td.active").css("opacity", "0").removeClass("active");
         var cls = $(this).attr("class").split(" ").pop();
         $("#qr-overlay td." + cls).each(function () {
@@ -4075,6 +4108,12 @@ $(document).ready(function () {
         })
 
         selectBlock(cls);
+    })
+
+    $("#btn-analysis-edit").click(function () {
+        module_edit_mode = !module_edit_mode;
+        $(this).toggleClass("active", module_edit_mode);
+        $("#analysis-edit-hint").toggleClass("hide", !module_edit_mode);
     })
 
     // Drag to select a range of decoded message characters

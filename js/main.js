@@ -635,9 +635,7 @@ function saveProject(projectName) {
         return;
     }
 
-    var saveData = [qr_array, qr_version, qr_format_array];
-    if (image_overlay)
-        saveData.push(image_overlay);
+    var saveData = [qr_array, qr_version, qr_format_array, image_overlay || null, byte_notes];
     var dataList = JSON.parse(localStorage.getItem("dataList"));
     var timeNow = new Date();
     var timeData = timeNow.toDateString();
@@ -657,10 +655,10 @@ function saveProject(projectName) {
     try {
         localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
     } catch (e) {
-        if (saveData.length < 4)
+        if (!saveData[3])
             throw e;
-        // not enough space for the image overlay, keep the QR code data
-        saveData.pop();
+        // not enough space for the image overlay, keep the QR code data and notes
+        saveData[3] = null;
         localStorage.setItem("saveData_" + projectName, JSON.stringify(saveData));
         alert("Not enough storage space for the image overlay.\nProject saved without it.");
     }
@@ -686,6 +684,7 @@ function loadProject(name) {
     qr_array = loadedData[0];
     qr_format_array = loadedData[2];
     setImageOverlay(loadedData[3] || null);
+    byte_notes = loadedData[4] || {};
     brute_force_mode = false;
     $("#tools-brute-force, #tools-unmasking").removeClass("active");
     refreshTable();
@@ -2776,6 +2775,26 @@ function generateDataBlocks() {
 // Selected qr_data_block indices in the "Decoded message" panel
 var message_selection = [];
 
+// Notes attached to a byte, keyed by the byte's first module ("x-y") so they survive re-decoding
+var byte_notes = {};
+
+// The module key a note is attached to : the first module of the data block
+function noteKey(index) {
+    var block = qr_data_block[index];
+    return block && block.modules[0] ? block.modules[0] : null;
+}
+
+// Show the note field when exactly one byte is selected, prefilled with its note
+function updateNoteField() {
+    if (message_selection.length != 1) {
+        $("#analysis-note").addClass("hide");
+        return;
+    }
+    var key = noteKey(message_selection[0]);
+    $("#analysis-note").removeClass("hide");
+    $("#analysis-note-input").val(key && byte_notes[key] ? byte_notes[key] : "");
+}
+
 // Click a grid module to set its value while analysing (guided by the image overlay)
 var module_edit_mode = false;
 
@@ -2833,12 +2852,17 @@ function renderDecodedMessage() {
         }
         if (shown == "")
             shown = "�";
-        html += "<span class='msg-char" + (hasUnknown ? " unknown" : "") + "' data-idx='" + i + "'>" + shown + "</span>";
+        var key = qr_data_block[i].modules[0];
+        var note = key && byte_notes[key] ? byte_notes[key] : "";
+        var title = note ? " title='" + note.replace(/'/g, "&#39;").replace(/</g, "&lt;") + "'" : "";
+        html += "<span class='msg-char" + (hasUnknown ? " unknown" : "") + (note ? " noted" : "")
+            + "' data-idx='" + i + "'" + title + ">" + shown + "</span>";
     }
 
     if (html == "")
         html = "<i>No decoded message.</i>";
     $("#data-analysis-message").html(html);
+    $("#analysis-note").addClass("hide");
 }
 
 // Highlight the modules of the selected blocks on the grid overlay
@@ -2862,6 +2886,7 @@ function selectMessageByBlock(index) {
         message_selection = [];
         $("#btn-analysis-recover").prop("disabled", true);
         highlightMessageSelection();
+        updateNoteField();
         return;
     }
 
@@ -2869,6 +2894,7 @@ function selectMessageByBlock(index) {
     span.addClass("selected");
     $("#btn-analysis-recover").prop("disabled", false);
     highlightMessageSelection();
+    updateNoteField();
     span[0].scrollIntoView({ block: "nearest" });
 }
 
@@ -4204,6 +4230,7 @@ $(document).ready(function () {
 
         $("#btn-analysis-recover").prop("disabled", message_selection.length == 0);
         highlightMessageSelection();
+        updateNoteField();
     }
 
     $(document).on("mousedown", ".msg-char", function (e) {
@@ -4211,6 +4238,28 @@ $(document).ready(function () {
         msg_dragging = true;
         msg_anchor = parseInt($(this).attr("data-idx"));
         applyMessageRange(msg_anchor);
+    });
+
+    // Save the note for the currently selected byte
+    $("#analysis-note-input").on("input", function () {
+        if (message_selection.length != 1)
+            return;
+        var key = noteKey(message_selection[0]);
+        if (!key)
+            return;
+        var text = $(this).val();
+        if (text === "")
+            delete byte_notes[key];
+        else
+            byte_notes[key] = text;
+        changed_state = true;
+
+        var span = $(".msg-char[data-idx='" + message_selection[0] + "']");
+        span.toggleClass("noted", text !== "");
+        if (text !== "")
+            span.attr("title", text);
+        else
+            span.removeAttr("title");
     });
 
     $(document).on("mouseenter", ".msg-char", function (e) {

@@ -361,6 +361,33 @@ a:focus-visible,
 	color: var(--accent-contrast);
 }
 
+#data-analysis-message .msg-char.noted {
+	border-bottom: 2px solid var(--warn);
+	cursor: help;
+}
+
+#analysis-note {
+	margin-top: 8px;
+}
+
+#analysis-note label {
+	display: block;
+	font-size: 11px;
+	color: var(--text-dim);
+	margin-bottom: 4px;
+}
+
+#analysis-note input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 6px 8px;
+	font-size: 13px;
+	background: var(--panel-2);
+	border: solid 1px var(--border-2);
+	border-radius: var(--radius-sm);
+	color: var(--text);
+}
+
 .toolbox {
 	background-color: var(--panel-2);
 	border: solid 1px var(--border);

@@ -555,6 +555,13 @@
 					</div>
 				</div>
 				<div class="space"></div>
+				<h5>Export / Import file : </h5>
+				<h6>Export downloads the whole project as a .json file you can back up or share. Import loads one back.</h6>
+				<button class="left" onclick="exportProject($('#save-name').val());">Export to file</button>
+				<button onclick="$('#import-project').click();">Import from file</button>
+				<input type="file" id="import-project" accept=".json,application/json" style="display:none;">
+				<div class="clear"></div>
+				<div class="space"></div>
 				<button onclick="$('#div-save').hide();">Close</button>
 			</div>
 		</center>

@@ -668,6 +668,54 @@ function saveProject(projectName) {
 }
 
 /***
+*	Export the current project as a downloadable .json file (same format as a saved project)
+***/
+function exportProject(projectName) {
+    var name = (projectName || "").replace(/[^\w\- ]/g, "").trim() || "qrazybox-project";
+    var saveData = [qr_array, qr_version, qr_format_array, image_overlay || null, byte_notes];
+
+    var blob = new Blob([JSON.stringify(saveData)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = name + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/***
+*	Load a project from an exported .json file
+***/
+function importProjectData(loadedData) {
+    if (!Array.isArray(loadedData) || !Array.isArray(loadedData[0])) {
+        alert("This file is not a valid QRazyBox project.");
+        return;
+    }
+    qr_version = loadedData[1];
+    qr_size = 17 + (qr_version * 4);
+    generateTable(qr_version);
+    qr_array = loadedData[0];
+    qr_format_array = loadedData[2];
+    setImageOverlay(loadedData[3] || null);
+    byte_notes = loadedData[4] || {};
+    brute_force_mode = false;
+    $("#tools-brute-force, #tools-unmasking").removeClass("active");
+    refreshTable();
+    $("#qr-version").val(qr_size + "x" + qr_size + " (ver. " + qr_version + ")");
+    $("#div-save").hide();
+    if ($("#btn-switch-mode").hasClass("active"))
+        toggleResult();
+    if (analysis_mode)
+        $("#tools-data-analysis").trigger("click");
+    $("#qr-overlay").html("");
+    clearHistory();
+    updateHistory("Import project file");
+    changed_state = true;
+}
+
+/***
 *
 *	Load project from LocalStorage
 *	
@@ -3188,6 +3236,25 @@ $(document).ready(function () {
 
             };
             reader.readAsText(this.files[0]);
+        }
+    })
+
+    $("#import-project").change(function () {
+        if (this.files && this.files[0]) {
+            if (changed_state && !confirm("Importing will replace the current QR code.\nYour unsaved progress will be lost. Continue?")) {
+                this.value = "";
+                return;
+            }
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                try {
+                    importProjectData(JSON.parse(e.target.result));
+                } catch (err) {
+                    alert("Could not read the project file : " + err);
+                }
+            };
+            reader.readAsText(this.files[0]);
+            this.value = "";
         }
     })
 

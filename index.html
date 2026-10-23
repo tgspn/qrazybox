@@ -249,14 +249,18 @@
 
 	<!-- START MAIN WORKSPACE -->
 	<div class="main">
-		<div class="qr-box">
-			<table id="qr-table" class="qr-tab"></table>
-			<table id="qr-overlay" class="qr-tab"></table>
-			<img id="qr-image-overlay" class="hide" src="#">
-			<div id="qr-result" class="hide">
-				<canvas id="qr-result-canvas"></canvas>
-				<p>
-					<textarea id="qr-result-dump" readonly></textarea>
+		<div class="qr-fit" id="qr-fit">
+			<div class="qr-stage" id="qr-stage">
+			<div class="qr-box">
+				<table id="qr-table" class="qr-tab"></table>
+				<table id="qr-overlay" class="qr-tab"></table>
+				<img id="qr-image-overlay" class="hide" src="#">
+				<div id="qr-result" class="hide">
+					<canvas id="qr-result-canvas"></canvas>
+					<p>
+						<textarea id="qr-result-dump" readonly></textarea>
+				</div>
+			</div>
 			</div>
 		</div>
 		<div id="div-extract" class="div-extract hide">
@@ -267,6 +271,7 @@
 
 	<!-- START LIVE DECODE PANEL -->
 	<div class="live-decode hide noselect" id="live-decode">
+		<div class="rz-handle rz-top" id="live-decode-resize" title="Drag to resize"></div>
 		<div class="live-decode-head">
 			<span class="live-decode-label">Final decoded string</span>
 			<div class="live-decode-right">
@@ -277,6 +282,53 @@
 		<div class="live-decode-body live-decode-empty" id="live-decode-msg">Waiting for data&hellip;</div>
 	</div>
 	<!-- END LIVE DECODE PANEL -->
+
+	<!-- START RECOVERY PANEL -->
+	<div class="recovery-panel hide noselect" id="recovery-panel">
+		<div class="rz-handle rz-left" id="recovery-resize" title="Drag to resize"></div>
+		<div class="recovery-head">
+			<span class="recovery-title" id="recovery-title">Auto Recovery</span>
+			<span class="recovery-sub" id="recovery-sub">Previewing on the grid</span>
+		</div>
+		<div class="recovery-body" id="recovery-body">
+			<div class="recovery-warn hide" id="recovery-warn"></div>
+
+			<div class="recovery-section hide" id="recovery-decoded-sec">
+				<div class="recovery-klabel">Decoded message</div>
+				<div class="recovery-decoded" id="recovery-decoded"></div>
+				<div class="recovery-note hide" id="recovery-decoded-note"></div>
+			</div>
+
+			<div class="recovery-section" id="recovery-diff-sec">
+				<div class="recovery-klabel">
+					Bits
+					<span class="recovery-legend">
+						<span class="lg lg-add">recovered</span>
+						<span class="lg lg-del">conflict</span>
+						<span class="lg lg-unk">unknown</span>
+					</span>
+				</div>
+				<div class="recovery-diff-row">
+					<span class="recovery-diff-tag">before</span>
+					<code class="recovery-diff" id="recovery-before"></code>
+				</div>
+				<div class="recovery-diff-row">
+					<span class="recovery-diff-tag">after</span>
+					<code class="recovery-diff" id="recovery-after"></code>
+				</div>
+			</div>
+
+			<div class="recovery-section" id="recovery-details-sec">
+				<div class="recovery-klabel">Details</div>
+				<div class="recovery-mono" id="recovery-details"></div>
+			</div>
+		</div>
+		<div class="recovery-foot">
+			<button class="recovery-btn recovery-apply" id="recovery-apply">Apply</button>
+			<button class="recovery-btn recovery-cancel" id="recovery-cancel">Cancel</button>
+		</div>
+	</div>
+	<!-- END RECOVERY PANEL -->
 
 	<!-- START TOAST -->
 	<div class="toast hide noselect" id="toast"></div>

@@ -84,6 +84,7 @@ function generateTable(version) {
     updateToolbox();
     clearHistory();
     updateHistory("New QR code");
+    layoutWorkspace();
 }
 
 /***
@@ -494,6 +495,7 @@ function resize(size) {
         $(this).css({ "min-width": size + "px", "min-height": size + "px", "width": size + "px", "height": size + "px" });
     })
     refreshImageOverlay();
+    if (typeof fitQrToWorkspace === "function") fitQrToWorkspace();
 }
 
 /***
@@ -601,6 +603,7 @@ function toggleResult() {
     }
     updateStatusBar();
     scheduleLiveDecode();
+    layoutWorkspace();
 }
 
 /***
@@ -1725,20 +1728,24 @@ function liveDecodeHtml(msg) {
     return html;
 }
 
-/*	Force-decode the current grid once (clone + silenced console), shared by the
-	live-decode box and the Information panel. */
-function forceDecodeCurrent() {
+/*	Force-decode an array (clone + silenced console). */
+function forceDecodeArray(array) {
     var result = null;
     var _log = console.log, _warn = console.warn, _err = console.error;
     try {
         console.log = console.warn = console.error = function () { };
-        result = QRDecode(JSON.parse(JSON.stringify(qr_array)));
+        result = QRDecode(JSON.parse(JSON.stringify(array)));
     } catch (e) {
         result = null;
     } finally {
         console.log = _log; console.warn = _warn; console.error = _err;
     }
     return result;
+}
+
+/*	Force-decode the current grid, shared by the live-decode box and Info panel. */
+function forceDecodeCurrent() {
+    return forceDecodeArray(qr_array);
 }
 
 function updateLiveDecode() {
@@ -1753,7 +1760,7 @@ function updateLiveDecode() {
     var box = document.getElementById("live-decode");
 
     if (!loaded) {
-        if (box) box.classList.add("hide");
+        setLiveDecodeVisible(false);
         renderInfoPanel(null);
         return;
     }
@@ -1764,12 +1771,14 @@ function updateLiveDecode() {
 
     if (!box) return;
 
-    // The bottom "Final decoded string" box shows in editor mode only
-    if ($("#btn-switch-mode").hasClass("active") || extract_info_mode) {
-        box.classList.add("hide");
+    // The bottom "Final decoded string" box shows in editor mode only, and not
+    // while the recovery panel is taking over the workspace
+    if ($("#btn-switch-mode").hasClass("active") || extract_info_mode
+        || !$("#recovery-panel").hasClass("hide")) {
+        setLiveDecodeVisible(false);
         return;
     }
-    box.classList.remove("hide");
+    setLiveDecodeVisible(true);
 
     var msgEl = document.getElementById("live-decode-msg");
     var metaEl = document.getElementById("live-decode-meta");
@@ -2173,6 +2182,273 @@ function patchingRecovery(result) {
     $("#patch-rec-after").val(result.after);
 
     qr_temp_array = Array.prototype.slice.call(result.result_array);
+}
+
+/***
+*
+*	In-context recovery : preview the recovered modules on the center grid and
+*	show a side panel with a git-style bit diff, details and Apply / Cancel.
+*
+***/
+
+function clearRecoveryPreview() {
+    $("#qr-table td.green").removeClass("green");
+}
+
+function renderRecoveryPreview(result) {
+    clearRecoveryPreview();
+    for (var i = 0; i < result.result_array.length; i++) {
+        for (var j = 0; j < result.result_array[i].length; j++) {
+            if (qr_array[i][j] == result.result_array[i][j]) continue;
+            var td = document.getElementById("qr-" + i + "-" + j);
+            if (!td) continue;
+            if (td.className.indexOf("static") !== -1 || td.className.indexOf("info") !== -1) continue;
+            var v = result.result_array[i][j];
+            td.classList.remove("black", "white");
+            td.classList.add("green");
+            if (v === 1) td.classList.add("black");
+            else if (v === 0) td.classList.add("white");
+        }
+    }
+}
+
+/*	Build highlighted HTML for a bit string, coalescing runs of the same class. */
+function diffBitsHtml(str, classOf) {
+    var html = "", run = "", runClass = null;
+    var esc = function (s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); };
+    var flush = function () {
+        if (!run) return;
+        html += runClass ? '<span class="' + runClass + '">' + esc(run) + '</span>' : esc(run);
+        run = "";
+    };
+    for (var i = 0; i < str.length; i++) {
+        var c = classOf(i);
+        if (c !== runClass) { flush(); runClass = c; }
+        run += str.charAt(i);
+    }
+    flush();
+    return html;
+}
+
+function bitsBeforeHtml(before) {
+    return diffBitsHtml(before, function (i) {
+        return before.charAt(i) === "?" ? "b-unk" : null;
+    });
+}
+
+function bitsAfterHtml(before, after) {
+    return diffBitsHtml(after, function (i) {
+        var b = before.charAt(i), a = after.charAt(i);
+        if (a === "?") return "b-unk";      // still unknown
+        if (b === "?") return "b-add";      // recovered
+        if (b !== a) return "b-del";        // conflict with a known module
+        return null;
+    });
+}
+
+function openRecoveryPanel(result, title) {
+    $("#recovery-title").text(title);
+    $("#recovery-warn").addClass("hide").text("");
+    $("#live-decode").addClass("hide");
+
+    // Recovery failed : the routine returned an explanatory string
+    if (typeof result === "string") {
+        clearRecoveryPreview();
+        qr_temp_array = null;
+        $("#recovery-diff-sec, #recovery-decoded-sec").addClass("hide");
+        $("#recovery-sub").text("Could not recover");
+        $("#recovery-details").text(result);
+        $("#recovery-apply").prop("disabled", true);
+        $("#recovery-panel").removeClass("hide");
+        layoutWorkspace();
+        return;
+    }
+
+    $("#recovery-diff-sec").removeClass("hide");
+    $("#recovery-apply").prop("disabled", false);
+
+    var before = result.before || "";
+    var after = result.after || "";
+
+    var recovered = 0, conflicts = 0;
+    for (var i = 0; i < after.length; i++) {
+        var b = before.charAt(i), a = after.charAt(i);
+        if (b === "?" && a !== "?") recovered++;
+        else if (b !== "?" && a !== "?" && a !== b) conflicts++;
+    }
+
+    $("#recovery-sub").text(recovered + " bit" + (recovered === 1 ? "" : "s") + " recovered · previewing on the grid");
+
+    if (conflicts) {
+        $("#recovery-warn").removeClass("hide").text(
+            conflicts + (conflicts === 1 ? " module conflicts" : " modules conflict")
+            + " with a known module of the original QR code. The correction may be wrong.");
+    }
+
+    $("#recovery-before").html(bitsBeforeHtml(before));
+    $("#recovery-after").html(bitsAfterHtml(before, after));
+
+    // Decode the recovered grid and show the message in its own section,
+    // keeping the Details log purely technical.
+    var dec = forceDecodeArray(result.result_array);
+    var message = (dec && typeof dec.message === "string") ? dec.message : "";
+    var decErr = !!(dec && dec.error && dec.error.length > 0);
+
+    if (message.length) {
+        $("#recovery-decoded-sec").removeClass("hide");
+        document.getElementById("recovery-decoded").innerHTML = liveDecodeHtml(message);
+        $("#recovery-decoded").removeClass("is-empty");
+        if (decErr) {
+            $("#recovery-decoded-note").removeClass("hide")
+                .text("Reed-Solomon reported errors — the decoded message may be wrong.");
+        } else {
+            $("#recovery-decoded-note").addClass("hide").text("");
+        }
+    } else {
+        $("#recovery-decoded-sec").addClass("hide");
+    }
+
+    // Details : drop the decoded message lines so it is not duplicated,
+    // whether standalone or prefixed with a label ("Message: ...", "Decoded: ...").
+    var info = result.info || "";
+    if (message.length) {
+        var m = message.trim();
+        info = info.split("\n").filter(function (l) {
+            var t = l.trim();
+            if (t === m) return false;
+            var stripped = t.replace(/^[A-Za-z][\w .\-]*:\s*/, "");
+            if (stripped !== t && stripped === m) return false;
+            return true;
+        }).join("\n");
+        info = info.replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+    }
+    $("#recovery-details").text(info || "No additional details.");
+
+    renderRecoveryPreview(result);
+    qr_temp_array = JSON.parse(JSON.stringify(result.result_array));
+
+    $("#recovery-panel").removeClass("hide");
+    layoutWorkspace();
+}
+
+function closeRecoveryPanel() {
+    clearRecoveryPreview();
+    refreshTable();
+    $("#recovery-panel").addClass("hide");
+    layoutWorkspace();
+    scheduleLiveDecode();
+}
+
+/***
+*
+*	Resizable workspace : the live-decode box (height) and the recovery panel
+*	(width) can be dragged; the center QR scales to fit the remaining space.
+*
+***/
+var live_height = parseInt(localStorage.getItem("qbx_live_h")) || 0;     // 0 = natural
+var recovery_width = parseInt(localStorage.getItem("qbx_rec_w")) || 342;
+
+function isWideLayout() {
+    return window.innerWidth > 900;
+}
+
+function fitQrToWorkspace() {
+    var stage = document.getElementById("qr-stage");
+    var fit = document.getElementById("qr-fit");
+    var main = document.querySelector(".main");
+    if (!stage || !fit || !main) return;
+
+    // Reset to measure the QR at its natural size
+    stage.style.transform = "";
+    fit.style.width = "";
+    fit.style.height = "";
+
+    var natW = stage.offsetWidth, natH = stage.offsetHeight;
+    if (!natW || !natH) return;
+
+    var cs = getComputedStyle(main);
+    var availW = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var availH = main.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+
+    var s = Math.min(1, availW / natW, availH / natH);
+    if (s < 1) {
+        stage.style.transform = "scale(" + s + ")";
+        // The outer wrapper takes the scaled layout size so the workspace
+        // reflows (and does not scroll) around the shrunken QR.
+        fit.style.width = Math.ceil(natW * s) + "px";
+        fit.style.height = Math.ceil(natH * s) + "px";
+    }
+}
+
+function layoutWorkspace() {
+    var main = document.querySelector(".main");
+    var liveBox = document.getElementById("live-decode");
+    var recBox = document.getElementById("recovery-panel");
+    if (!main || !liveBox || !recBox) return;
+
+    if (!isWideLayout()) {
+        main.style.right = "";
+        main.style.bottom = "";
+        liveBox.style.height = "";
+        recBox.style.width = "";
+        fitQrToWorkspace();
+        return;
+    }
+
+    // Apply the stored sizes to the panels
+    liveBox.style.height = live_height > 0 ? live_height + "px" : "";
+    recBox.style.width = recovery_width + "px";
+
+    var liveVisible = !$(liveBox).hasClass("hide");
+    var recVisible = !$(recBox).hasClass("hide");
+
+    var lh = liveVisible ? (live_height > 0 ? live_height : liveBox.offsetHeight || 92) : 0;
+    main.style.bottom = (liveVisible ? (36 + lh + 12) : 28) + "px";
+    main.style.right = (recVisible ? (352 + recovery_width + 12) : 340) + "px";
+
+    fitQrToWorkspace();
+}
+
+function setLiveDecodeVisible(vis) {
+    var box = document.getElementById("live-decode");
+    if (!box) return;
+    var was = !box.classList.contains("hide");
+    if (vis) box.classList.remove("hide"); else box.classList.add("hide");
+    if (vis !== was) layoutWorkspace();
+}
+
+function startResizeDrag(e, axis) {
+    e.preventDefault();
+    var handle = axis === "v"
+        ? document.getElementById("live-decode-resize")
+        : document.getElementById("recovery-resize");
+    if (handle) handle.classList.add("dragging");
+
+    var startX = e.clientX, startY = e.clientY;
+    var startH = live_height > 0 ? live_height : document.getElementById("live-decode").offsetHeight;
+    var startW = recovery_width;
+    document.body.style.userSelect = "none";
+
+    var onMove = function (ev) {
+        if (axis === "v") {
+            live_height = Math.max(72, Math.min(startH + (startY - ev.clientY), window.innerHeight * 0.6));
+        } else {
+            recovery_width = Math.max(260, Math.min(startW + (startX - ev.clientX), window.innerWidth * 0.5));
+        }
+        layoutWorkspace();
+    };
+    var onUp = function () {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        if (handle) handle.classList.remove("dragging");
+        document.body.style.userSelect = "";
+        try {
+            localStorage.setItem("qbx_live_h", live_height);
+            localStorage.setItem("qbx_rec_w", recovery_width);
+        } catch (err) { }
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
 }
 
 
@@ -3461,40 +3737,36 @@ $(document).ready(function () {
     ****************************/
 
     $("#tools-pad-recovery").click(function () {
-        patchingRecovery(recoverPaddingBits(JSON.parse(JSON.stringify(qr_array))));
-        $("#div-patching-recovery-title").text("Padding Bits Recovery");
-        $("#div-patching-recovery").show();
-
-        $("#div-tools").hide();
+        openRecoveryPanel(recoverPaddingBits(JSON.parse(JSON.stringify(qr_array))), "Padding Bits Recovery");
     })
 
     $("#tools-smart-recovery").click(function () {
-        patchingRecovery(smartRecovery(JSON.parse(JSON.stringify(qr_array))));
-        $("#div-patching-recovery-title").text("Smart Recovery");
-        $("#div-patching-recovery").show();
-
-        $("#div-tools").hide();
+        openRecoveryPanel(smartRecovery(JSON.parse(JSON.stringify(qr_array))), "Smart Recovery");
     })
 
     $("#tools-auto-recovery").click(function () {
-        patchingRecovery(autoRecovery(JSON.parse(JSON.stringify(qr_array))));
-        $("#div-patching-recovery-title").text("Auto Recovery");
-        $("#div-patching-recovery").show();
-
-        $("#div-tools").hide();
+        openRecoveryPanel(autoRecovery(JSON.parse(JSON.stringify(qr_array))), "Auto Recovery");
     })
 
-    $("#btn-patch-rec-apply").click(function () {
+    $("#recovery-apply").click(function () {
+        if (!qr_temp_array) return;
         qr_array = JSON.parse(JSON.stringify(qr_temp_array));
+        clearRecoveryPreview();
         refreshTable();
-        updateHistory($("#div-patching-recovery-title").text());
-        $("#div-patching-recovery").hide();
+        updateHistory($("#recovery-title").text());
+        $("#recovery-panel").addClass("hide");
         changed_state = true;
+        layoutWorkspace();
+        scheduleLiveDecode();
     })
 
-    $("#btn-patch-rec-cancel").click(function () {
-        $("#div-patching-recovery").hide();
+    $("#recovery-cancel").click(function () {
+        closeRecoveryPanel();
     })
+
+    $("#live-decode-resize").on("mousedown", function (e) { startResizeDrag(e, "v"); });
+    $("#recovery-resize").on("mousedown", function (e) { startResizeDrag(e, "h"); });
+    $(window).on("resize", layoutWorkspace);
 
     /****************************
         Reed-Solomon Decoder

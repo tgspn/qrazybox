@@ -388,17 +388,87 @@ a:focus-visible,
 }
 
 .main {
+	position: fixed;
+	top: 38px;
+	left: 280px;
+	right: 340px;
+	bottom: 28px;
 	display: flex;
 	justify-content: center;
 	align-items: flex-start;
-	margin: 38px 340px 28px 280px;
-	padding: 54px 24px;
-	min-height: calc(100vh - 66px);
+	padding: 40px 24px;
 	box-sizing: border-box;
+	overflow: auto;
 	background-color: var(--bg-canvas);
 	background-image:
 		radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.035) 1px, transparent 0);
 	background-size: 24px 24px;
+}
+
+.qr-fit {
+	flex: 0 0 auto;
+}
+
+.qr-stage {
+	transform-origin: top left;
+}
+
+/* ----- Resize handles ----- */
+.rz-handle {
+	position: absolute;
+	z-index: 6;
+	background: transparent;
+	transition: background 0.12s;
+}
+
+.rz-handle:hover,
+.rz-handle.dragging {
+	background: var(--accent-soft);
+}
+
+.rz-top {
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 7px;
+	cursor: ns-resize;
+}
+
+.rz-left {
+	top: 0;
+	left: 0;
+	bottom: 0;
+	width: 7px;
+	cursor: ew-resize;
+}
+
+.rz-top::after {
+	content: "";
+	position: absolute;
+	top: 2px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 34px;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--border-2);
+}
+
+.rz-left::after {
+	content: "";
+	position: absolute;
+	left: 2px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 3px;
+	height: 34px;
+	border-radius: 2px;
+	background: var(--border-2);
+}
+
+.rz-handle:hover::after,
+.rz-handle.dragging::after {
+	background: var(--accent);
 }
 
 .qr-box {
@@ -1533,8 +1603,8 @@ noscript div h4 {
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
-	max-height: 170px;
-	padding: 11px 15px 13px;
+	min-height: 72px;
+	padding: 14px 15px 13px;
 	background: rgba(18, 18, 21, 0.92);
 	-webkit-backdrop-filter: blur(10px) saturate(1.3);
 	backdrop-filter: blur(10px) saturate(1.3);
@@ -1618,6 +1688,8 @@ noscript div h4 {
 }
 
 .live-decode-body {
+	flex: 1 1 auto;
+	min-height: 0;
 	font-family: var(--font-mono);
 	font-size: 13px;
 	line-height: 1.55;
@@ -1625,7 +1697,6 @@ noscript div h4 {
 	white-space: pre-wrap;
 	word-break: break-word;
 	overflow-y: auto;
-	max-height: 120px;
 	-webkit-user-select: text;
 	user-select: text;
 }
@@ -1815,6 +1886,266 @@ noscript div h4 {
 	font-weight: normal;
 }
 
+/* ----- Recovery panel (in-context, beside the grid) ----- */
+
+.recovery-panel {
+	position: fixed;
+	top: 50px;
+	bottom: 36px;
+	right: 352px;
+	width: 342px;
+	z-index: 30;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	background: var(--panel);
+	border: solid 1px var(--border-2);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow);
+	overflow: hidden;
+}
+
+.recovery-head {
+	flex: none;
+	padding: 13px 16px;
+	border-bottom: solid 1px var(--border);
+}
+
+.recovery-title {
+	display: block;
+	font-size: 15px;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	color: var(--text);
+}
+
+.recovery-sub {
+	display: block;
+	margin-top: 2px;
+	font-size: 11px;
+	color: var(--text-dim);
+}
+
+.recovery-body {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 14px 16px;
+}
+
+.recovery-section {
+	margin-bottom: 16px;
+}
+
+.recovery-section:last-child {
+	margin-bottom: 0;
+}
+
+.recovery-klabel {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 7px;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-dim);
+}
+
+.recovery-legend {
+	display: flex;
+	gap: 10px;
+	letter-spacing: 0;
+	text-transform: none;
+	font-weight: 600;
+	font-size: 10px;
+}
+
+.recovery-legend .lg {
+	position: relative;
+	padding-left: 11px;
+	color: var(--text-dim);
+}
+
+.recovery-legend .lg::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 7px;
+	height: 7px;
+	border-radius: 2px;
+}
+
+.recovery-legend .lg-add::before { background: var(--ok); }
+.recovery-legend .lg-del::before { background: var(--danger); }
+.recovery-legend .lg-unk::before { background: var(--warn); }
+
+.recovery-diff-row {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 6px;
+}
+
+.recovery-diff-tag {
+	flex: none;
+	width: 44px;
+	padding-top: 1px;
+	font-size: 10px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--text-faint);
+}
+
+.recovery-diff {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--text-dim);
+	word-break: break-all;
+	max-height: 150px;
+	overflow-y: auto;
+	padding: 7px 9px;
+	background: var(--panel-2);
+	border: solid 1px var(--border);
+	border-radius: var(--radius-sm);
+	-webkit-user-select: text;
+	user-select: text;
+}
+
+.recovery-diff .b-add {
+	color: #0b1e12;
+	background: var(--ok);
+	border-radius: 2px;
+}
+
+.recovery-diff .b-del {
+	color: #fff;
+	background: var(--danger);
+	border-radius: 2px;
+}
+
+.recovery-diff .b-unk {
+	color: var(--accent-contrast);
+	background: var(--warn);
+	border-radius: 2px;
+}
+
+.recovery-decoded {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text);
+	word-break: break-all;
+	padding: 9px 11px;
+	background: var(--panel-2);
+	border: solid 1px var(--border);
+	border-left: solid 3px var(--accent);
+	border-radius: var(--radius-sm);
+	-webkit-user-select: text;
+	user-select: text;
+}
+
+.recovery-decoded .live-decode-gap {
+	color: var(--danger);
+	opacity: 0.65;
+}
+
+.recovery-decoded.is-empty {
+	font-family: var(--font);
+	font-style: italic;
+	color: var(--text-faint);
+	border-left-color: var(--border-2);
+}
+
+.recovery-note {
+	margin-top: 6px;
+	font-size: 11px;
+	line-height: 1.4;
+	color: var(--warn);
+}
+
+.recovery-mono {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1.55;
+	color: var(--text-dim);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 230px;
+	overflow-y: auto;
+	padding: 9px 11px;
+	background: var(--panel-2);
+	border: solid 1px var(--border);
+	border-radius: var(--radius-sm);
+	-webkit-user-select: text;
+	user-select: text;
+}
+
+.recovery-warn {
+	margin-bottom: 14px;
+	padding: 9px 11px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--warn);
+	background: rgba(224, 169, 92, 0.1);
+	border: solid 1px rgba(224, 169, 92, 0.35);
+	border-radius: var(--radius-sm);
+}
+
+.recovery-foot {
+	flex: none;
+	display: flex;
+	gap: 10px;
+	padding: 12px 16px;
+	border-top: solid 1px var(--border);
+}
+
+.recovery-btn {
+	flex: 1;
+	padding: 10px 14px;
+	font-size: 14px;
+	font-weight: 600;
+	border-radius: var(--radius-sm);
+	border: solid 1px var(--border-2);
+	cursor: pointer;
+	transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.recovery-apply {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--accent-contrast);
+}
+
+.recovery-apply:hover {
+	background: var(--accent-strong);
+	border-color: var(--accent-strong);
+	color: #fff;
+}
+
+.recovery-apply:disabled {
+	background: var(--panel-2);
+	border-color: var(--border);
+	color: var(--text-faint);
+	cursor: not-allowed;
+}
+
+.recovery-cancel {
+	background: var(--panel-hi);
+	color: var(--text);
+}
+
+.recovery-cancel:hover {
+	background: var(--border-2);
+	border-color: var(--text-faint);
+}
+
 /* ----- Toast ----- */
 
 .toast {
@@ -1856,7 +2187,8 @@ noscript div h4 {
    earlier) would not win : force them hidden with a higher-specificity rule. */
 .live-decode.hide,
 .drop-hint.hide,
-.toast.hide {
+.toast.hide,
+.recovery-panel.hide {
 	display: none;
 }
 
@@ -1866,6 +2198,15 @@ noscript div h4 {
 		left: 12px;
 		right: 12px;
 		bottom: 62px;
+	}
+
+	.recovery-panel {
+		top: auto;
+		right: 12px;
+		left: 12px;
+		bottom: 62px;
+		width: auto;
+		max-height: 60vh;
 	}
 
 	#box-mode {
@@ -1883,7 +2224,9 @@ noscript div h4 {
 	}
 
 	.main {
-		margin: 38px 0 52px 0;
+		left: 0;
+		right: 0;
+		bottom: 52px;
 		padding: 24px 12px;
 	}
 

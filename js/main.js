@@ -2325,12 +2325,31 @@ function openRecoveryPanel(result, title) {
         else if (b !== "?" && a !== "?" && a !== b) conflicts++;
     }
 
+    // Modules you had drawn that the result turns back to unknown (would be erased on Apply)
+    var erased = 0;
+    var res = result.result_array;
+    for (var x = 0; res && x < res.length; x++) {
+        for (var y = 0; y < res[x].length; y++) {
+            if ((qr_array[x][y] === 0 || qr_array[x][y] === 1) && res[x][y] === -1)
+                erased++;
+        }
+    }
+
     $("#recovery-sub").text(recovered + " bit" + (recovered === 1 ? "" : "s") + " recovered · previewing on the grid");
 
-    if (conflicts) {
+    if (recovered === 0 && erased > 0) {
+        // Pure loss : the block was too damaged to solve, so the selection stays unknown
+        $("#recovery-warn").removeClass("hide").text(
+            "Nothing was recovered, and applying would set " + erased + " module(s) you had drawn back to unknown. "
+            + "Too many modules are missing in this block for the Reed-Solomon parity. Click Cancel unless you meant to clear them.");
+    } else if (conflicts) {
         $("#recovery-warn").removeClass("hide").text(
             conflicts + (conflicts === 1 ? " module conflicts" : " modules conflict")
-            + " with a known module of the original QR code. The correction may be wrong.");
+            + " with a known module of the original QR code. The correction may be wrong."
+            + (erased > 0 ? " Applying also sets " + erased + " drawn module(s) back to unknown." : ""));
+    } else if (erased > 0) {
+        $("#recovery-warn").removeClass("hide").text(
+            "Applying sets " + erased + " module(s) you had drawn back to unknown.");
     }
 
     $("#recovery-before").html(bitsBeforeHtml(before));

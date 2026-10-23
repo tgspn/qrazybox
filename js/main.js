@@ -2845,6 +2845,29 @@ function highlightMessageSelection() {
 }
 
 /***
+*	Select the decoded-message character of a data block (clicking a section on the grid
+*	selects its text), the inverse of selecting text to highlight the grid.
+***/
+function selectMessageByBlock(index) {
+    var span = $("#data-analysis-message .msg-char[data-idx='" + index + "']");
+    $(".msg-char").removeClass("selected");
+
+    if (!span.length) {
+        // Not a message byte (mode indicator, count, padding, error correction)
+        message_selection = [];
+        $("#btn-analysis-recover").prop("disabled", true);
+        highlightMessageSelection();
+        return;
+    }
+
+    message_selection = [index];
+    span.addClass("selected");
+    $("#btn-analysis-recover").prop("disabled", false);
+    highlightMessageSelection();
+    span[0].scrollIntoView({ block: "nearest" });
+}
+
+/***
 *	Mark the selected message bytes as unknown and recover them from the parity.
 ***/
 function recoverMessageSelection() {
@@ -4133,13 +4156,18 @@ $(document).ready(function () {
             return;
         }
 
+        // The cell may also carry sel-recover / active classes, so match the data-block one
+        var cls = ($(this).attr("class").match(/data-block-\d+/) || [])[0];
+        if (!cls)
+            return;
+
         $("#qr-overlay td.active").css("opacity", "0").removeClass("active");
-        var cls = $(this).attr("class").split(" ").pop();
         $("#qr-overlay td." + cls).each(function () {
             $(this).css("opacity", "0.75").addClass("active");
         })
 
         selectBlock(cls);
+        selectMessageByBlock(parseInt(cls.substring(11)));
     })
 
     $("#btn-analysis-edit").click(function () {

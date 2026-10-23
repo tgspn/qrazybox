@@ -2795,6 +2795,69 @@ function updateNoteField() {
     $("#analysis-note-input").val(key && byte_notes[key] ? byte_notes[key] : "");
 }
 
+// The module key of the byte currently followed, so the selection survives a re-decode
+var selected_byte_key = null;
+
+// Ordered data-idx list of the rendered message bytes
+function messageByteIndices() {
+    return $("#data-analysis-message .msg-char").map(function () {
+        return parseInt($(this).attr("data-idx"));
+    }).get();
+}
+
+// Update the "byte N of M" counter and remember which byte is being followed
+function updateByteNav() {
+    var indices = messageByteIndices();
+    if (message_selection.length == 1) {
+        selected_byte_key = noteKey(message_selection[0]);
+        var pos = indices.indexOf(message_selection[0]);
+        $("#analysis-byte-pos").text("byte " + (pos + 1) + " of " + indices.length);
+    } else if (message_selection.length > 1) {
+        selected_byte_key = null;
+        $("#analysis-byte-pos").text(message_selection.length + " bytes selected");
+    } else {
+        selected_byte_key = null;
+        $("#analysis-byte-pos").text("no byte selected");
+    }
+}
+
+// Select a single byte by its data block index (used by clicks and the prev / next buttons)
+function selectSingleByte(index, scroll) {
+    message_selection = [index];
+    $(".msg-char").removeClass("selected");
+    var span = $(".msg-char[data-idx='" + index + "']");
+    span.addClass("selected");
+    $("#btn-analysis-recover").prop("disabled", false);
+    highlightMessageSelection();
+    updateNoteField();
+    updateByteNav();
+    if (scroll && span.length)
+        span[0].scrollIntoView({ block: "nearest" });
+}
+
+// Move the selection to the previous / next byte, wrapping around
+function stepByte(delta) {
+    var indices = messageByteIndices();
+    if (!indices.length)
+        return;
+    var pos = message_selection.length ? indices.indexOf(message_selection[0]) : -1;
+    pos = (pos + delta + indices.length) % indices.length;
+    selectSingleByte(indices[pos], true);
+}
+
+// After a re-decode, re-select the byte that was being followed so the user keeps their place
+function restoreByteSelection() {
+    if (!selected_byte_key)
+        return;
+    for (var i = 0; i < qr_data_block.length; i++) {
+        if (qr_data_block[i].type == "Message data" && qr_data_block[i].modules[0] == selected_byte_key
+            && $(".msg-char[data-idx='" + i + "']").length) {
+            selectSingleByte(i, true);
+            return;
+        }
+    }
+}
+
 // Click a grid module to set its value while analysing (guided by the image overlay)
 var module_edit_mode = false;
 
@@ -2863,6 +2926,10 @@ function renderDecodedMessage() {
         html = "<i>No decoded message.</i>";
     $("#data-analysis-message").html(html);
     $("#analysis-note").addClass("hide");
+
+    // Keep following the same byte across a re-decode, so the user doesn't lose their place
+    restoreByteSelection();
+    updateByteNav();
 }
 
 // Highlight the modules of the selected blocks on the grid overlay
@@ -2887,15 +2954,11 @@ function selectMessageByBlock(index) {
         $("#btn-analysis-recover").prop("disabled", true);
         highlightMessageSelection();
         updateNoteField();
+        updateByteNav();
         return;
     }
 
-    message_selection = [index];
-    span.addClass("selected");
-    $("#btn-analysis-recover").prop("disabled", false);
-    highlightMessageSelection();
-    updateNoteField();
-    span[0].scrollIntoView({ block: "nearest" });
+    selectSingleByte(index, true);
 }
 
 /***
@@ -4209,6 +4272,9 @@ $(document).ready(function () {
         $("#analysis-edit-hint").toggleClass("hide", !module_edit_mode);
     })
 
+    $("#btn-byte-prev").click(function () { stepByte(-1); });
+    $("#btn-byte-next").click(function () { stepByte(1); });
+
     // Drag to select a range of decoded message characters
     var msg_dragging = false;
     var msg_anchor = -1;
@@ -4231,6 +4297,7 @@ $(document).ready(function () {
         $("#btn-analysis-recover").prop("disabled", message_selection.length == 0);
         highlightMessageSelection();
         updateNoteField();
+        updateByteNav();
     }
 
     $(document).on("mousedown", ".msg-char", function (e) {

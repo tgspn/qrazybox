@@ -220,6 +220,15 @@
 		<div id="analysis-float-body">
 			<h6>Drag to select the wrong part, then recover it. The selected bytes are marked unknown and recalculated from the Reed-Solomon parity.</h6>
 			<div id="data-analysis-message" class="noselect"></div>
+			<div id="analysis-msg-legend">
+				<span><i class="swatch unknown"></i> has unknown bits</span>
+				<span><i class="swatch noted"></i> has a note</span>
+			</div>
+			<div id="analysis-byte-nav">
+				<button id="btn-byte-prev" class="small" title="Previous byte">&lsaquo;</button>
+				<span id="analysis-byte-pos">no byte selected</span>
+				<button id="btn-byte-next" class="small" title="Next byte">&rsaquo;</button>
+			</div>
 			<div id="analysis-note" class="hide">
 				<label for="analysis-note-input">Note for this byte :</label>
 				<input type="text" id="analysis-note-input" placeholder="type a note, e.g. should be 'A'">

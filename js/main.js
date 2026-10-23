@@ -84,6 +84,7 @@ function generateTable(version) {
     updateToolbox();
     clearHistory();
     updateHistory("New QR code");
+    qr_fit_mode = true;
     layoutWorkspace();
 }
 
@@ -2347,6 +2348,7 @@ function closeRecoveryPanel() {
 ***/
 var live_height = parseInt(localStorage.getItem("qbx_live_h")) || 0;     // 0 = natural
 var recovery_width = parseInt(localStorage.getItem("qbx_rec_w")) || 342;
+var qr_fit_mode = true;   // auto-fit the QR to the workspace until the user zooms
 
 function isWideLayout() {
     return window.innerWidth > 900;
@@ -2358,10 +2360,14 @@ function fitQrToWorkspace() {
     var main = document.querySelector(".main");
     if (!stage || !fit || !main) return;
 
-    // Reset to measure the QR at its natural size
+    // Reset to the QR's natural size
     stage.style.transform = "";
     fit.style.width = "";
     fit.style.height = "";
+
+    // Once the user has zoomed (module size / wheel), their zoom is authoritative :
+    // the QR keeps its real size and can be panned, never auto-scaled.
+    if (!qr_fit_mode) return;
 
     var natW = stage.offsetWidth, natH = stage.offsetHeight;
     if (!natW || !natH) return;
@@ -3436,6 +3442,7 @@ $(document).ready(function () {
     }
 
     $("#btn-size-plus").click(function () {
+        qr_fit_mode = false;
         if (qr_pixel_size < 10) {
             qr_pixel_size += 1;
         } else if (qr_pixel_size < 50) {
@@ -3450,6 +3457,7 @@ $(document).ready(function () {
         }
     })
     $("#btn-size-min").click(function () {
+        qr_fit_mode = false;
         if (qr_pixel_size > 50) {
             qr_pixel_size -= 10;
         } else if (qr_pixel_size > 10) {
@@ -3472,6 +3480,10 @@ $(document).ready(function () {
         zoom_wheel_delta += e.deltaMode == 1 ? e.deltaY * 33 : e.deltaY;
         if (Math.abs(zoom_wheel_delta) < 50)
             return;
+
+        // Switch to real-size (zoom) mode before measuring, so the anchor math
+        // uses the unscaled grid.
+        if (qr_fit_mode) { qr_fit_mode = false; fitQrToWorkspace(); }
         var zoom_in = zoom_wheel_delta < 0;
         zoom_wheel_delta = 0;
 

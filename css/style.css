@@ -264,6 +264,73 @@ a:focus-visible,
 	cursor: default;
 }
 
+/* Floating box : decoded message selection + actions */
+#analysis-float {
+	position: fixed;
+	top: 120px;
+	right: 24px;
+	width: 320px;
+	max-width: calc(100vw - 32px);
+	z-index: 60;
+	background: var(--panel);
+	border: solid 1px var(--border-2);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow);
+	overflow: hidden;
+}
+
+#analysis-float-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 12px;
+	background: var(--panel-hi);
+	border-bottom: solid 1px var(--border-2);
+	cursor: move;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+	user-select: none;
+}
+
+#analysis-float-close {
+	cursor: pointer;
+	font-size: 18px;
+	line-height: 1;
+	color: var(--text-dim);
+	padding: 0 2px;
+}
+
+#analysis-float-close:hover {
+	color: var(--text);
+}
+
+#analysis-float-body {
+	padding: 10px 12px 12px;
+}
+
+#analysis-float-body h6 {
+	margin: 0 0 8px;
+	font-size: 11px;
+	font-weight: 400;
+	color: var(--text-dim);
+	line-height: 1.45;
+}
+
+#analysis-float-body #analysis-edit-hint {
+	margin: 8px 0 0;
+}
+
+.analysis-float-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.analysis-float-actions button {
+	flex: 1;
+}
+
 /* Decoded message : selectable characters tied to their data block */
 #data-analysis-message {
 	font-family: var(--font-mono);

@@ -206,21 +206,28 @@
 			<input type="text" readonly value="" class="full read-only" id="data-analysis-decoded">
 			<div class="clear"></div>
 			<div class="space"></div>
-			<h5>Decoded message : </h5>
-			<h6>Drag to select the wrong part, then recover it. The selected bytes are marked unknown and recalculated from the Reed-Solomon parity.</h6>
-			<div id="data-analysis-message" class="noselect"></div>
-			<div class="space small"></div>
-			<button id="btn-analysis-recover" class="small" disabled>Recover selection</button>
-			<div class="clear"></div>
-			<div class="space small"></div>
-			<button id="btn-analysis-edit" class="small toggle">Edit modules</button>
-			<h6 id="analysis-edit-hint" class="hide">Turn on <b>Image Overlay</b> to see the photo, then click a square to set it : unknown &rsaquo; black &rsaquo; white. The decode updates so you can tell if it helped.</h6>
-			<div class="clear"></div>
-			<div class="space"></div>
 		</div>
 		<!-- END DATA SEQUENCE TOOLBOX -->
 	</div>
 	<!-- END LEFT TOOLBOX -->
+
+	<!-- START DECODED MESSAGE FLOATING BOX -->
+	<div id="analysis-float" class="hide">
+		<div id="analysis-float-head">
+			<span>Decoded message</span>
+			<span id="analysis-float-close" title="Hide">&times;</span>
+		</div>
+		<div id="analysis-float-body">
+			<h6>Drag to select the wrong part, then recover it. The selected bytes are marked unknown and recalculated from the Reed-Solomon parity.</h6>
+			<div id="data-analysis-message" class="noselect"></div>
+			<div class="analysis-float-actions">
+				<button id="btn-analysis-recover" class="small" disabled>Recover selection</button>
+				<button id="btn-analysis-edit" class="small toggle">Edit modules</button>
+			</div>
+			<h6 id="analysis-edit-hint" class="hide">Turn on <b>Image Overlay</b> to see the photo, then click a square to set it : unknown &rsaquo; black &rsaquo; white. The decode updates so you can tell if it helped.</h6>
+		</div>
+	</div>
+	<!-- END DECODED MESSAGE FLOATING BOX -->
 
 	<!-- START RIGHT TOOLBOX -->
 	<div class="right-box">

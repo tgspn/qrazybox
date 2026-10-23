@@ -3969,6 +3969,7 @@ $(document).ready(function () {
             $(this).removeClass("active");
             $("#box-work").show();
             $("#box-tools-analysis").hide();
+            $("#analysis-float").addClass("hide");
             activateAnalysisMode("false");
         } else {
             analysis_mode = true;
@@ -3980,11 +3981,42 @@ $(document).ready(function () {
             $(this).addClass("active");
             $("#box-work").hide();
             $("#box-tools-analysis").show();
+            $("#analysis-float").removeClass("hide");
             activateAnalysisMode();
         }
 
         $("#div-tools").hide();
     })
+
+    // Close button and dragging of the floating decoded-message box
+    $("#analysis-float-close").click(function () {
+        $("#analysis-float").addClass("hide");
+    });
+
+    (function () {
+        var box = document.getElementById("analysis-float");
+        var head = document.getElementById("analysis-float-head");
+        if (!box || !head) return;
+        var dragging = false, offX = 0, offY = 0;
+
+        head.addEventListener("mousedown", function (e) {
+            if (e.target.id === "analysis-float-close") return;
+            dragging = true;
+            var r = box.getBoundingClientRect();
+            offX = e.clientX - r.left;
+            offY = e.clientY - r.top;
+            box.style.right = "auto";
+            e.preventDefault();
+        });
+        window.addEventListener("mousemove", function (e) {
+            if (!dragging) return;
+            var x = Math.min(window.innerWidth - 40, Math.max(0, e.clientX - offX));
+            var y = Math.min(window.innerHeight - 30, Math.max(0, e.clientY - offY));
+            box.style.left = x + "px";
+            box.style.top = y + "px";
+        });
+        window.addEventListener("mouseup", function () { dragging = false; });
+    })();
 
     $("#data-analysis-value").blur(function () {
         if ($("#qr-overlay td.active").length) {
@@ -4146,12 +4178,20 @@ $(document).ready(function () {
         applyMessageRange(msg_anchor);
     });
 
-    $(document).on("mouseenter", ".msg-char", function () {
-        if (msg_dragging)
-            applyMessageRange(parseInt($(this).attr("data-idx")));
+    $(document).on("mouseenter", ".msg-char", function (e) {
+        if (!msg_dragging)
+            return;
+        // The mouse button was released outside a character (or mouseup was lost) : stop here
+        if (e.buttons === 0) {
+            msg_dragging = false;
+            return;
+        }
+        applyMessageRange(parseInt($(this).attr("data-idx")));
     });
 
-    $(document).on("mouseup", function () {
+    // Native window listener : the panel-resize code calls $(document).off("mouseup"),
+    // which would otherwise remove a jQuery mouseup handler and leave the drag stuck on.
+    window.addEventListener("mouseup", function () {
         msg_dragging = false;
     });
 

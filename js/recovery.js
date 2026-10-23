@@ -724,6 +724,59 @@ function srDecodeSegments(bits, segments) {
     return { text: text, score: score };
 }
 
+var SR_B64 = (function () {
+    var set = {};
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".split("").forEach(function (c) {
+        set[c.charCodeAt(0)] = true;
+    });
+    return set;
+})();
+
+function srIsPrintable(v) {
+    return (v >= 0x20 && v < 0x7F) || v == 0x09 || v == 0x0A || v == 0x0D;
+}
+
+// Whether every data byte of a solution stays inside an alphabet (ignoring the pad bytes)
+function srByteContentScore(block, solution) {
+
+    var allBase64 = true;
+    var allPrintable = true;
+
+    for (var j = 0; j < block.data.length; j++) {
+        var v = solution[j];
+        if (v == 0xEC || v == 0x11)
+            continue;                       // padding : neutral
+        if (!SR_B64[v])
+            allBase64 = false;
+        if (!srIsPrintable(v))
+            allPrintable = false;
+    }
+
+    return { base64: allBase64, printable: allPrintable };
+}
+
+// Guess a block's expected alphabet from its known data bytes : base64-heavy, or plain text
+function srExpectedAlphabet(block) {
+    var b64 = 0, printable = 0, total = 0;
+    for (var j = 0; j < block.data.length; j++) {
+        if (block.data[j].bits.indexOf("?") != -1)
+            continue;
+        var v = parseInt(block.data[j].bits, 2);
+        if (v == 0xEC || v == 0x11)
+            continue;
+        total++;
+        if (SR_B64[v]) b64++;
+        if (srIsPrintable(v)) printable++;
+    }
+    if (total == 0)
+        return null;
+    if (b64 / total >= 0.8)
+        return "base64";
+    if (printable / total >= 0.8)
+        return "printable";
+    return null;
+}
+
 // Best reading of a data sequence, or null when it can't be parsed
 function srReadMessage(bits, version) {
 
@@ -974,41 +1027,59 @@ function srRecoverPass(data_array, limits) {
         return bits;
     }
 
-    // Readability means little while part of the message is still unknown
-    var unsolved = solutions.some(function (list) { return list == null; });
+    // Resolve a block that has several RS-valid solutions by validating each against the rest,
+    // the search the user pictured : try the free bits, keep the one whose result holds up.
+    // Two independent checks, so a block can be settled even while other blocks are still open :
+    //   1. byte content : its data bytes look like text / base64 (works per block)
+    //   2. message readability : the decoded message reads cleanly (only when all blocks are solved)
+    // A solution is committed only when it alone passes, never on a tie.
+    var anyOpen = solutions.some(function (list) { return list == null; });
 
     for (var b = 0; b < solutions.length; b++) {
         if (!solutions[b] || solutions[b].length < 2)
             continue;
-        if (unsolved) {
-            lines[b] += ": can't pick one while other blocks are unknown, block left unchanged";
-            solutions[b] = null;
-            status[b] = "open";
+
+        // 1. Byte content : commit the single solution whose every byte stays inside the block's
+        //    alphabet. A wrong Reed-Solomon solution differs in many bytes, so it almost never
+        //    stays all-base64 or all-printable. When the known bytes look like base64, the tighter
+        //    base64 alphabet is used; otherwise printable text.
+        var scored = solutions[b].map(function (sol, s) {
+            return { s: s, c: srByteContentScore(rs_blocks[b], sol) };
+        });
+        var base64Ones = scored.filter(function (x) { return x.c.base64; });
+        var printableOnes = scored.filter(function (x) { return x.c.printable; });
+        if (srExpectedAlphabet(rs_blocks[b]) == "base64" && base64Ones.length == 1) {
+            choice[b] = base64Ones[0].s;
+            lines[b] += ": picked the only solution whose bytes stay valid base64";
             continue;
         }
-        var best_score = -Infinity;
-        var best = 0;
-        var ties = 0;
-        for (var s = 0; s < solutions[b].length; s++) {
-            choice[b] = s;
-            var read = srReadMessage(assemble(), version);
-            var score = read ? read.score : -Infinity;
-            if (score > best_score) {
-                best_score = score;
-                best = s;
-                ties = 1;
-            } else if (score == best_score) {
-                ties++;
+        if (printableOnes.length == 1) {
+            choice[b] = printableOnes[0].s;
+            lines[b] += ": picked the only solution whose bytes look like text";
+            continue;
+        }
+
+        // 2. Message readability : rank by how cleanly the whole message decodes
+        if (!anyOpen) {
+            var best_score = -Infinity, best = 0, ties = 0;
+            for (var s = 0; s < solutions[b].length; s++) {
+                choice[b] = s;
+                var read = srReadMessage(assemble(), version);
+                var score = read ? read.score : -Infinity;
+                if (score > best_score) { best_score = score; best = s; ties = 1; }
+                else if (score == best_score) { ties++; }
+            }
+            choice[b] = best;
+            if (ties == 1) {
+                lines[b] += ": picked the one with the most readable text";
+                continue;
             }
         }
-        choice[b] = best;
-        if (ties > 1) {
-            solutions[b] = null;
-            status[b] = "open";
-            lines[b] += ": " + ties + " are equally plausible, block left unchanged";
-        } else {
-            lines[b] += ": picked the one with the most readable text";
-        }
+
+        // Nothing stood out : leave the block unknown rather than guess
+        solutions[b] = null;
+        status[b] = "open";
+        lines[b] += ": no single solution clearly valid, block left unchanged, more modules are needed";
     }
 
     var final_bits = assemble();

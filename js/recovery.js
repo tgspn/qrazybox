@@ -830,6 +830,9 @@ function srRecoverPass(data_array, limits) {
     var width = data_array.length;
     var version = (width - 21) / 4 + 1;
     var format_info = getFormatInfo(data_array);
+    // Fill the format info automatically when a single valid pattern still fits its known bits
+    if (!format_info.known && recoverFormatBits(data_array))
+        format_info = getFormatInfo(data_array);
     if (!format_info.known)
         return "ERROR: Unknown format information (error correction level and mask pattern). Recover it first, e.g. with Brute-force Format Info Pattern";
 
@@ -1093,6 +1096,9 @@ function srUnknownCodewords(bits) {
 function autoRecovery(data_array) {
 
     var format_info = getFormatInfo(data_array);
+    // Fill the format info automatically when a single valid pattern still fits its known bits
+    if (!format_info.known && recoverFormatBits(data_array))
+        format_info = getFormatInfo(data_array);
     if (!format_info.known)
         return "ERROR: Format information (error correction level and mask pattern) is unknown. " +
             "Recover it first with Brute-force Format Info Pattern, then run Auto Recovery again.";

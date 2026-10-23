@@ -335,6 +335,64 @@ function getFormatInfo(data) {
     return { ecc: error_correction_level, mask: mask_pattern, known: known };
 }
 
+/***
+*	Recover the format information (error correction level + mask) when some of its modules
+*	are grey, by matching the known bits against the 32 valid format patterns. Reads both
+*	copies to use as many known bits as possible, fills both copies in `data`, and returns
+*	true on a single consistent pattern (false when none or several still fit).
+***/
+function recoverFormatBits(data) {
+
+    var size = data.length;
+
+    function read(a, b) {
+        var va = data[a[0]][a[1]], vb = data[b[0]][b[1]];
+        if (va == 0 || va == 1) return String(va);
+        if (vb == 0 || vb == 1) return String(vb);
+        return "?";
+    }
+
+    // 15 format bits in qr_format_array order; '?' only when both copies are grey
+    var fmt = [];
+    for (var i = 0; i < 8; i++) {
+        var r = i > 5 ? i + 1 : i;
+        fmt[i] = read([r, 8], [8, size - (i + 1)]);
+    }
+    for (var i = 14, index = 0; i >= 8; i--, index++) {
+        var c = index > 5 ? index + 1 : index;
+        fmt[i] = read([8, c], [size - (index + 1), 8]);
+    }
+    var bits = fmt.slice().reverse().join("");   // matches format_information_bits entries
+
+    var matches = [];
+    for (var ecc = 0; ecc < 4; ecc++) {
+        for (var mask = 0; mask < 8; mask++) {
+            var pat = format_information_bits[ecc][mask];
+            var ok = true;
+            for (var k = 0; k < 15 && ok; k++)
+                if (bits.charAt(k) != "?" && bits.charAt(k) != pat.charAt(k))
+                    ok = false;
+            if (ok)
+                matches.push(pat);
+        }
+    }
+    if (matches.length != 1)
+        return false;
+
+    var qf = matches[0].split("").reverse();   // qr_format_array order
+    for (var i = 0; i < 8; i++) {
+        var r = i > 5 ? i + 1 : i;
+        data[r][8] = parseInt(qf[i]);
+        data[8][size - (i + 1)] = parseInt(qf[i]);
+    }
+    for (var i = 14, index = 0; i >= 8; i--, index++) {
+        var c = index > 5 ? index + 1 : index;
+        data[8][c] = parseInt(qf[i]);
+        data[size - (index + 1)][8] = parseInt(qf[i]);
+    }
+    return true;
+}
+
 function maskData(data_array, mask_pattern) {
 
     var width = data_array.length;

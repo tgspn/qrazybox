@@ -2752,6 +2752,76 @@ function generateDataBlocks() {
         }
     }
 
+    renderDecodedMessage();
+
+}
+
+// Selected qr_data_block indices in the "Decoded message" panel
+var message_selection = [];
+
+/***
+*	Render the decoded message as selectable characters, each tied to its data block,
+*	so the user can select a damaged region and recover it (Recover selection).
+***/
+function renderDecodedMessage() {
+
+    message_selection = [];
+    $("#btn-analysis-recover").prop("disabled", true);
+
+    var html = "";
+    for (var i = 0; i < qr_data_block.length; i++) {
+        if (qr_data_block[i].type != "Message data")
+            continue;
+        var text = String(qr_data_block[i].decoded);
+        // Show control / unknown bytes as a placeholder so the garbage is visible and selectable
+        var hasUnknown = qr_data_block[i].value.indexOf("?") != -1;
+        var shown = "";
+        for (var k = 0; k < text.length; k++) {
+            var code = text.charCodeAt(k);
+            if (code < 0x20 || code == 0x7F)
+                shown += "�";
+            else
+                shown += text.charAt(k)
+                    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+        if (shown == "")
+            shown = "�";
+        html += "<span class='msg-char" + (hasUnknown ? " unknown" : "") + "' data-idx='" + i + "'>" + shown + "</span>";
+    }
+
+    if (html == "")
+        html = "<i>No decoded message.</i>";
+    $("#data-analysis-message").html(html);
+}
+
+// Highlight the modules of the selected blocks on the grid overlay
+function highlightMessageSelection() {
+    $("#qr-overlay td.sel-recover").css("opacity", "0").removeClass("sel-recover");
+    for (var i = 0; i < message_selection.length; i++) {
+        $("#qr-overlay td.data-block-" + message_selection[i]).css("opacity", "0.6").addClass("sel-recover");
+    }
+}
+
+/***
+*	Mark the selected message bytes as unknown and recover them from the parity.
+***/
+function recoverMessageSelection() {
+
+    if (!message_selection.length)
+        return;
+
+    var temp = JSON.parse(JSON.stringify(qr_array));
+    var mask_pattern = getFormatInfo(qr_array).mask;
+
+    for (var s = 0; s < message_selection.length; s++) {
+        var modules = qr_data_block[message_selection[s]].modules;
+        for (var m = 0; m < modules.length; m++) {
+            var cord = modules[m].split('-');
+            temp[cord[0]][cord[1]] = -1;
+        }
+    }
+
+    openRecoveryPanel(smartRecovery(temp), "Recover Selection");
 }
 
 //Generate separator border between blocks
@@ -3770,6 +3840,10 @@ $(document).ready(function () {
         changed_state = true;
         layoutWorkspace();
         scheduleLiveDecode();
+
+        // Refresh the data sequence analysis (overlay + decoded message) on the recovered QR
+        if (analysis_mode)
+            activateAnalysisMode();
     })
 
     $("#recovery-cancel").click(function () {
@@ -3980,6 +4054,49 @@ $(document).ready(function () {
 
         selectBlock(cls);
     })
+
+    // Drag to select a range of decoded message characters
+    var msg_dragging = false;
+    var msg_anchor = -1;
+
+    function applyMessageRange(toIdx) {
+        var indices = $("#data-analysis-message .msg-char").map(function () {
+            return parseInt($(this).attr("data-idx"));
+        }).get();
+        var a = indices.indexOf(msg_anchor);
+        var b = indices.indexOf(toIdx);
+        if (a < 0 || b < 0)
+            return;
+        if (a > b) { var t = a; a = b; b = t; }
+
+        message_selection = indices.slice(a, b + 1);
+        $(".msg-char").removeClass("selected");
+        for (var i = 0; i < message_selection.length; i++)
+            $(".msg-char[data-idx='" + message_selection[i] + "']").addClass("selected");
+
+        $("#btn-analysis-recover").prop("disabled", message_selection.length == 0);
+        highlightMessageSelection();
+    }
+
+    $(document).on("mousedown", ".msg-char", function (e) {
+        e.preventDefault();
+        msg_dragging = true;
+        msg_anchor = parseInt($(this).attr("data-idx"));
+        applyMessageRange(msg_anchor);
+    });
+
+    $(document).on("mouseenter", ".msg-char", function () {
+        if (msg_dragging)
+            applyMessageRange(parseInt($(this).attr("data-idx")));
+    });
+
+    $(document).on("mouseup", function () {
+        msg_dragging = false;
+    });
+
+    $("#btn-analysis-recover").click(function () {
+        recoverMessageSelection();
+    });
 
     $(document).on("mousedown", "#qr-table td", function (e) {
         var painter = active_painter;

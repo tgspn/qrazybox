@@ -259,6 +259,41 @@ a:focus-visible,
 	color: #06222e;
 }
 
+.side-box button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* Decoded message : selectable characters tied to their data block */
+#data-analysis-message {
+	font-family: var(--font-mono);
+	font-size: 13px;
+	line-height: 1.6;
+	max-height: 180px;
+	overflow-y: auto;
+	padding: 6px 8px;
+	background: var(--panel-2);
+	border: solid 1px var(--border-2);
+	border-radius: var(--radius-sm);
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: var(--text);
+}
+
+#data-analysis-message .msg-char {
+	cursor: pointer;
+	border-radius: 2px;
+}
+
+#data-analysis-message .msg-char.unknown {
+	color: var(--warn);
+}
+
+#data-analysis-message .msg-char.selected {
+	background: var(--accent);
+	color: var(--accent-contrast);
+}
+
 .toolbox {
 	background-color: var(--panel-2);
 	border: solid 1px var(--border);

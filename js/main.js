@@ -33,6 +33,7 @@ var qr_data_block = [];					// Array to store data block in "Data Analysis tool"
 
 var grid_offset = [0, 0];				// Translation of the grid in the workspace (pan)
 var image_overlay = null;				// Data URL of image shown over the editor grid (from raw image import)
+var last_import_overlay = null;			// Overlay built by the last successful image import
 
 var is_data_module = [];				// Store data that separate between data module and fixed module (function pattern, alignment pattern, etc)
 
@@ -807,6 +808,7 @@ function decodeFromBase64(img, callback) {
 
 function importFromImage(src, cb) {
     setSampleFromSrc(src);
+    last_import_overlay = null;
     var img = new Image();
     img.crossOrigin = "Anonymous";
     img.onload = function () {
@@ -877,9 +879,50 @@ function importFromImage(src, cb) {
             }
         }
 
+        last_import_overlay = importOverlay(decoder, qr_matrix, size);
+
         cb(result);
     }
     img.src = src;
+}
+
+/***
+*
+*	Rectified copy of the imported image, to show under the editor grid.
+*	jsQR hands over the symbol corners ; the fallback detector only knows the
+*	finder pattern centers (3.5 modules in from each corner), so the corners
+*	are extrapolated from those.
+*
+***/
+function importOverlay(decoder, qr_matrix, size) {
+    try {
+        var corners;
+        if (decoder && decoder.location) {
+            var l = decoder.location;
+            corners = [
+                [l.topLeftCorner.x, l.topLeftCorner.y],
+                [l.topRightCorner.x, l.topRightCorner.y],
+                [l.bottomRightCorner.x, l.bottomRightCorner.y],
+                [l.bottomLeftCorner.x, l.bottomLeftCorner.y]
+            ];
+        } else if (qr_matrix && qr_matrix.points && qr_matrix.points.length >= 3) {
+            var bl = qr_matrix.points[0], tl = qr_matrix.points[1], tr = qr_matrix.points[2];
+            var span = size - 7;        // modules between opposite finder pattern centers
+            var ex = [(tr.X - tl.X) / span, (tr.Y - tl.Y) / span];
+            var ey = [(bl.X - tl.X) / span, (bl.Y - tl.Y) / span];
+            var ox = tl.X - 3.5 * (ex[0] + ey[0]);
+            var oy = tl.Y - 3.5 * (ex[1] + ey[1]);
+            var at = function (u, v) {
+                return [ox + u * ex[0] + v * ey[0], oy + u * ex[1] + v * ey[1]];
+            };
+            corners = [at(0, 0), at(size, 0), at(size, size), at(0, size)];
+        } else {
+            return null;
+        }
+        return rectifyImage(qrcode.imagedata, corners, size);
+    } catch (e) {
+        return null;
+    }
 }
 
 /***
@@ -1242,10 +1285,18 @@ function zoomRawImport(factor, viewX, viewY) {
 
 // Image of the QR code area with perspective removed, one square per module
 function rectifyRawImport(version) {
-    var size = 17 + version * 4;
+    return rectifyImage(raw_import.pixels, raw_import.corners, 17 + version * 4);
+}
+
+/***
+*
+*	Warp the quad given by corners (TL, TR, BR, BL) of an ImageData into a
+*	square image that lines up module for module with the editor grid.
+*
+***/
+function rectifyImage(p, corners, size) {
     var out = size * Math.max(4, Math.min(16, Math.floor(800 / size)));
-    var map = rawImportTransform(raw_import.corners);
-    var p = raw_import.pixels;
+    var map = rawImportTransform(corners);
     var canvas = document.createElement("canvas");
     var ctx = canvas.getContext("2d");
     canvas.width = out;
@@ -2037,6 +2088,7 @@ function importImageSrc(src) {
             clearHistory();
             updateHistory("Load from image");
             refreshTable();
+            setImageOverlay(last_import_overlay);
             changed_state = true;
             showToast("Imported from image");
         } else {
@@ -3217,6 +3269,7 @@ $(document).ready(function () {
                         clearHistory();
                         updateHistory("Load from image");
                         refreshTable();
+                        setImageOverlay(last_import_overlay);
                         changed_state = true;
                     } else {
                         // Direct decode failed : open the enhance tool so the image can be cleaned up
@@ -3556,6 +3609,7 @@ $(document).ready(function () {
                 clearHistory();
                 updateHistory("Load from enhanced image");
                 refreshTable();
+                setImageOverlay(last_import_overlay);
                 changed_state = true;
             } else {
                 $("#enhance-status").removeClass("ok").addClass("fail")
